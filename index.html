@@ -97,6 +97,7 @@ const SEGMENTS = [
   {name:"Seely Beach",        dist:5, river:false, note:"Spruce forest and clifftop lookouts over the Bay of Fundy."},
   {name:"St. Martins",        dist:0, river:false, note:"Sea caves, a harbour, and a hot meal. The end of the Footpath."},
 ];
+const MIDPOINT_SEG = 3; // Little Salmon River — cue the "back home" cutscene on arrival
 
 /* -------- Game state -------- */
 let S;
@@ -118,6 +119,7 @@ function newState(){
     gear:{tent:true, stove:true, boots:true, rope:true},
     tally:{rivers:0, bears:0, moose:0, fish:0, gearSaved:0}, // run stats for the ending
     fx:{shake:0, flash:0},        // screen-shake px + red hit-flash alpha
+    sawMidwayCutscene:false,
     pending:null,        // event/minigame context
     log:"",
   };
@@ -540,6 +542,98 @@ function drawIntroFrame(t){
 }
 
 /* ============================================================
+   MIDWAY CUTSCENE: "Meanwhile, back home..."
+   A one-shot cutaway to Mom & Dad by the pool, triggered when the
+   party arrives at the trail's midpoint segment.
+   ============================================================ */
+let cutsceneState=null;
+function showMidwayCutscene(onContinue){
+  S.screen='CUTSCENE';
+  clearButtons(); setHint("");
+  setMsg(`<i>📍 Meanwhile, back home…</i>`);
+  cutsceneState = {t:0, raf:null, buttonShown:false, onContinue};
+  cutsceneLoop();
+}
+function cutsceneLoop(){
+  if(!cutsceneState) return;
+  cutsceneState.t++;
+  drawCutsceneFrame(cutsceneState.t);
+  if(cutsceneState.t>=230 && !cutsceneState.buttonShown){
+    cutsceneState.buttonShown = true;
+    addButton("Continue →", ()=>{ const cb=cutsceneState.onContinue; cutsceneState=null; cb(); }, "go");
+    return; // freeze the frame once the button appears
+  }
+  cutsceneState.raf = requestAnimationFrame(cutsceneLoop);
+}
+function drawCloud(x,y){
+  cx.fillStyle="#fff"; cx.beginPath();
+  cx.arc(x,y,14,0,7); cx.arc(x+16,y-6,16,0,7); cx.arc(x+32,y,14,0,7); cx.fill();
+}
+function drawLoungeChair(x,y){
+  cx.save(); cx.translate(x,y);
+  cx.fillStyle="#c2b280"; cx.save(); cx.rotate(-0.25); cx.fillRect(-50,-10,100,14); cx.restore();
+  cx.fillStyle="#4a2c1a"; cx.fillRect(-40,4,6,20); cx.fillRect(35,4,6,20);
+  cx.restore();
+}
+function drawDad(x,y){
+  cx.save(); cx.translate(x,y);
+  cx.save(); cx.rotate(-0.25); cx.fillStyle="#2f5a8a"; cx.fillRect(-34,-8,60,26); cx.restore();
+  cx.fillStyle="#c9a27a"; cx.fillRect(-40,10,70,14);                 // shorts/legs
+  cx.fillStyle="#c9a27a"; cx.beginPath(); cx.arc(30,-26,11,0,7); cx.fill();          // head
+  cx.fillStyle="#4a3320"; cx.beginPath(); cx.arc(30,-32,9,3.4,6.2); cx.fill();       // hair
+  cx.fillStyle="#c9a27a"; cx.fillRect(20,-8,20,9);                    // arm to phone
+  cx.fillStyle="#111"; cx.fillRect(38,-42,11,17);                    // phone
+  cx.fillStyle="#7fd1e0"; cx.fillRect(39,-40,9,11);                   // phone screen
+  cx.restore();
+}
+function drawMom(x,y){
+  cx.save(); cx.translate(x,y);
+  cx.save(); cx.rotate(-0.25); cx.fillStyle="#c0507a"; cx.fillRect(-34,-8,60,26); cx.restore();
+  cx.fillStyle="#c9a27a"; cx.fillRect(-40,10,70,14);
+  cx.fillStyle="#c9a27a"; cx.beginPath(); cx.arc(30,-26,11,0,7); cx.fill();
+  cx.fillStyle="#3a2416"; cx.beginPath(); cx.arc(30,-31,10,3.3,6.3); cx.fill();      // hair
+  cx.fillStyle="#111"; cx.fillRect(22,-29,16,5);                     // sunglasses
+  cx.fillStyle="#e8e8e8"; cx.fillRect(48,-16,6,14);                   // glass
+  cx.fillStyle="#f4d03f"; cx.fillRect(48,-16,6,4);                   // drink
+  cx.restore();
+}
+function drawSpeech(text, headX, headY, maxW, alpha){
+  if(alpha<=0) return;
+  cx.save(); cx.globalAlpha=alpha; cx.font="12px Courier New";
+  const words=text.split(' '); let lines=[], cur="";
+  for(const w of words){ const t2=cur?cur+" "+w:w; if(cx.measureText(t2).width>maxW-24 && cur){ lines.push(cur); cur=w; } else cur=t2; }
+  if(cur) lines.push(cur);
+  const bw = Math.min(maxW, Math.max(...lines.map(l=>cx.measureText(l).width))+24);
+  const bh = lines.length*16+16;
+  const bx = clamp(headX-bw/2, 10, W-10-bw);
+  const by = headY-bh-20;
+  cx.fillStyle="#fff"; roundRect(bx,by,bw,bh,10); cx.fill();
+  cx.strokeStyle="#000"; cx.lineWidth=2; roundRect(bx,by,bw,bh,10); cx.stroke();
+  cx.beginPath(); cx.moveTo(headX-8,by+bh); cx.lineTo(headX+8,by+bh); cx.lineTo(headX,by+bh+14); cx.closePath();
+  cx.fillStyle="#fff"; cx.fill(); cx.stroke();
+  cx.fillStyle="#111"; cx.textAlign='left';
+  lines.forEach((l,i)=> cx.fillText(l, bx+12, by+18+i*16));
+  cx.restore(); cx.textAlign='left';
+}
+function drawCutsceneFrame(t){
+  cx.clearRect(0,0,W,H);
+  bg("#8ec9e8","#bfe0d8");
+  cx.fillStyle="#ffd94a"; cx.beginPath(); cx.arc(700,50,26,0,7); cx.fill();
+  drawCloud(150,55); drawCloud(430,38);
+  cx.fillStyle="#d8c9a6"; cx.fillRect(0,150,W,210);
+  cx.fillStyle="#2f8fae"; roundRect(140,190,520,140,30); cx.fill();
+  cx.strokeStyle="#eaf6fa"; cx.lineWidth=4; roundRect(140,190,520,140,30); cx.stroke();
+  cx.strokeStyle="rgba(255,255,255,.35)"; cx.lineWidth=2;
+  for(let y=214;y<316;y+=20){ cx.beginPath(); for(let x=150;x<650;x+=20){ cx.lineTo(x, y+Math.sin((x+t*2)/18)*3); } cx.stroke(); }
+  drawLoungeChair(230,300); drawDad(230,280);
+  drawLoungeChair(560,300); drawMom(560,280);
+  const dadF = clamp((t-30)/50,0,1);
+  const momF = clamp((t-140)/50,0,1);
+  drawSpeech("I texted the boys 4 minutes ago and haven't seen a response. I need you to check their GPS tracker.", 260,190,230, dadF);
+  drawSpeech("Oh honey, I'm sure they're fine and having fun.", 590,190,200, momF);
+}
+
+/* ============================================================
    SCREENS
    ============================================================ */
 function render(){
@@ -550,6 +644,7 @@ function render(){
     case 'TRAIL': renderTrail(); break;
     case 'EVENT': renderEvent(); break;
     case 'MINIGAME': startCrossing(); break;
+    case 'CUTSCENE': break; // driven by its own loop; nothing to re-render here
     case 'CAMP': renderCamp(); break;
     case 'END': renderEnd(); break;
   }
@@ -676,9 +771,22 @@ function advance(){
     S.log = `You push on through the backcountry. ${seg.name} stretches on.`;
   }
   if(checkAllDown()) return;
+  if(checkMidwayCutscene(()=>{ if(Math.random()<0.62){ queueEvent(); } else { S.screen='TRAIL'; render(); } })) return;
   // random event?
   if(Math.random()<0.62){ queueEvent(); }
   else { S.screen='TRAIL'; render(); }
+}
+
+// one-shot "meanwhile, back home" cutscene at the trail's midpoint. Both the
+// plain walking-arrival path (advance) and the river-crossing finish path
+// (finishCrossing) can land the party on MIDPOINT_SEG, so both call this.
+function checkMidwayCutscene(onDone){
+  if(!S.sawMidwayCutscene && S.seg===MIDPOINT_SEG){
+    S.sawMidwayCutscene = true;
+    showMidwayCutscene(onDone);
+    return true;
+  }
+  return false;
 }
 
 function checkAllDown(){
@@ -988,6 +1096,7 @@ function finishCrossing(){
   tickTide(2);
   if(S.seg>=SEGMENTS.length-1){ S.screen='END'; return void render(); }
   S.pending=null; mg=null;
+  if(checkMidwayCutscene(()=>{ S.screen='TRAIL'; render(); })) return;
   S.screen='TRAIL'; render();
 }
 
