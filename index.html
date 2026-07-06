@@ -108,20 +108,31 @@ function newState(){
     tide:30,             // 0 = dead low, 100 = full high
     tideRising:true,
     brothers:[
-      {name:"Angus", health:100, energy:100, morale:100, down:false},
-      {name:"Callum",health:100, energy:100, morale:100, down:false},
-      {name:"Duncan",health:100, energy:100, morale:100, down:false},
+      {name:"Chris", health:100, energy:100, morale:100, down:false},
+      {name:"Alex", health:100, energy:100, morale:100, down:false},
+      {name:"Nick", health:100, energy:100, morale:100, down:false},
     ],
+    gear:{tent:true, stove:true, boots:true, rope:true},
+    tally:{rivers:0, bears:0, moose:0, fish:0, gearSaved:0}, // run stats for the ending
+    fx:{shake:0, flash:0},        // screen-shake px + red hit-flash alpha
     pending:null,        // event/minigame context
     log:"",
   };
 }
 
+// gear metadata: icon + label + effect blurb (shown in status)
+const GEAR_INFO = {
+  tent: {icon:"⛺", label:"Tent",  lost:"no shelter — rest heals less"},
+  stove:{icon:"🔥", label:"Stove", lost:"cold food — meals don't heal"},
+  boots:{icon:"🥾", label:"Boots", lost:"blistered — faster energy drain"},
+  rope: {icon:"🪢", label:"Rope",  lost:"no line — crossings hit harder"},
+};
+
 const LOADOUTS = [
-  {id:'lean', name:"Lean & Fast", food:38, note:"Light packs, big miles. Less food but strong morale and energy.",
-    apply:s=>{s.food=38; s.brothers.forEach(b=>{b.energy=100;b.morale=100;});}},
-  {id:'balanced', name:"Well-Provisioned", food:64, note:"Heavy packs, plenty of food. Slower, and the weight wears on you.",
-    apply:s=>{s.food=64; s.brothers.forEach(b=>{b.energy=88;b.morale=94;});}},
+  {id:'lean', name:"Lean & Fast", food:38, note:"Light packs, big miles. Less food, and you leave the rope behind to save weight.",
+    apply:s=>{s.food=38; s.brothers.forEach(b=>{b.energy=100;b.morale=100;}); s.gear={tent:true,stove:true,boots:true,rope:false};}},
+  {id:'balanced', name:"Well-Provisioned", food:64, note:"Heavy packs, full kit. Slower, and the weight wears on you.",
+    apply:s=>{s.food=64; s.brothers.forEach(b=>{b.energy=88;b.morale=94;}); s.gear={tent:true,stove:true,boots:true,rope:true};}},
 ];
 
 /* ============================================================
@@ -183,6 +194,131 @@ function drawBrothers(){
 }
 function healthColor(h){ return h>60?"#3f9d4a":h>30?"#d1a12f":"#c0392b"; }
 
+/* ---------- animated FX (shake + red hit-flash) ---------- */
+function kickShake(m){ S.fx.shake = Math.max(S.fx.shake, m); }
+function kickFlash(a=0.6){ S.fx.flash = Math.max(S.fx.flash, a); }
+function fxTick(){
+  if(S.fx.shake>0){ S.fx.shake*=0.84; if(S.fx.shake<0.4) S.fx.shake=0; }
+  if(S.fx.flash>0){ S.fx.flash-=0.05; if(S.fx.flash<0) S.fx.flash=0; }
+}
+function fxPre(){ cx.save(); if(S.fx.shake>0){ cx.translate((Math.random()-0.5)*S.fx.shake,(Math.random()-0.5)*S.fx.shake); } }
+function fxPost(){ cx.restore(); if(S.fx.flash>0){ cx.fillStyle=`rgba(200,40,30,${S.fx.flash.toFixed(2)})`; cx.fillRect(0,0,W,H); } }
+
+/* ---------- creature + object sprites ---------- */
+// pose: 'walk' (all fours) or 'rear' (upright, claws up)
+function drawBear(x, base, scale, pose){
+  cx.save(); cx.translate(x, base); cx.scale(scale, scale);
+  cx.fillStyle="#241812";
+  if(pose==='rear'){
+    // upright, menacing
+    cx.fillRect(-22,-96,44,80);                 // torso
+    cx.beginPath(); cx.arc(0,-104,17,0,7); cx.fill();   // head
+    cx.fillStyle="#241812"; cx.beginPath(); cx.arc(-12,-118,6,0,7); cx.arc(12,-118,6,0,7); cx.fill(); // ears
+    // raised arms + claws
+    cx.fillRect(-34,-92,14,34); cx.fillRect(20,-92,14,34);
+    cx.fillStyle="#e9dcc0";
+    for(let i=0;i<3;i++){ cx.fillRect(-36+i*5,-96,3,9); cx.fillRect(24+i*5,-96,3,9); }
+    // snout + eyes
+    cx.fillStyle="#5a4234"; cx.beginPath(); cx.arc(0,-100,6,0,7); cx.fill();
+    cx.fillStyle="#d14a2f"; cx.fillRect(-8,-110,4,4); cx.fillRect(4,-110,4,4);
+    cx.fillStyle="#fff"; cx.fillRect(-3,-102,6,3);   // teeth
+  } else {
+    // on all fours
+    cx.fillStyle="#241812";
+    cx.beginPath(); cx.ellipse(0,-30,34,22,0,0,7); cx.fill();  // body
+    cx.beginPath(); cx.arc(-40,-34,15,0,7); cx.fill();          // head
+    cx.beginPath(); cx.arc(-50,-46,5,0,7); cx.arc(-40,-48,5,0,7); cx.fill(); // ears
+    cx.fillStyle="#5a4234"; cx.beginPath(); cx.arc(-52,-30,5,0,7); cx.fill(); // snout
+    cx.fillStyle="#d14a2f"; cx.fillRect(-46,-38,4,4);           // eye
+    cx.fillStyle="#241812"; cx.fillRect(-24,-14,8,16); cx.fillRect(-2,-14,8,16); cx.fillRect(20,-14,8,16); // legs
+  }
+  cx.restore();
+}
+function drawClawSlash(x,y){
+  cx.save(); cx.strokeStyle="#fff"; cx.lineWidth=4; cx.globalAlpha=0.9;
+  for(let i=-1;i<=1;i++){ cx.beginPath(); cx.moveTo(x-40+i*14, y-40); cx.lineTo(x+40+i*14, y+40); cx.stroke(); }
+  cx.restore();
+}
+function drawMoose(x, base, scale){
+  cx.save(); cx.translate(x, base); cx.scale(scale, scale);
+  cx.fillStyle="#3a2a1c";
+  cx.fillRect(-30,-70,60,44);                          // body
+  cx.fillRect(-30,-30,10,30); cx.fillRect(18,-30,10,30); // legs
+  cx.beginPath(); cx.ellipse(-34,-78,14,20,0,0,7); cx.fill(); // head
+  cx.fillRect(-40,-64,10,20);                          // snout/dewlap
+  // antlers
+  cx.strokeStyle="#6b5236"; cx.lineWidth=5;
+  cx.beginPath(); cx.moveTo(-40,-92); cx.lineTo(-58,-104); cx.moveTo(-40,-92); cx.lineTo(-48,-112);
+  cx.moveTo(-28,-92); cx.lineTo(-10,-104); cx.moveTo(-28,-92); cx.lineTo(-20,-112); cx.stroke();
+  cx.fillStyle="#111"; cx.beginPath(); cx.arc(-38,-80,3,0,7); cx.fill(); // eye
+  cx.restore();
+}
+function drawFish(x,y,type){
+  cx.save(); cx.translate(x,y);
+  if(type==='clam'){
+    cx.fillStyle="#c9b89a"; cx.beginPath(); cx.arc(0,0,9,Math.PI,0); cx.fill();
+    cx.strokeStyle="#8a795c"; cx.lineWidth=1; cx.beginPath(); cx.moveTo(-9,0); cx.lineTo(9,0); cx.stroke();
+  } else if(type==='crab'){
+    cx.fillStyle="#b5482f"; cx.beginPath(); cx.ellipse(0,0,10,7,0,0,7); cx.fill();
+    cx.strokeStyle="#b5482f"; cx.lineWidth=2;
+    cx.beginPath(); cx.moveTo(-10,0); cx.lineTo(-16,-5); cx.moveTo(10,0); cx.lineTo(16,-5); cx.stroke();
+  } else {
+    cx.fillStyle="#7fae8a"; cx.beginPath(); cx.ellipse(0,0,12,6,0,0,7); cx.fill();
+    cx.beginPath(); cx.moveTo(11,0); cx.lineTo(20,-6); cx.lineTo(20,6); cx.closePath(); cx.fill(); // tail
+    cx.fillStyle="#123"; cx.beginPath(); cx.arc(-7,-1,1.6,0,7); cx.fill(); // eye
+  }
+  cx.restore();
+}
+function drawPack(x,y,rot){
+  cx.save(); cx.translate(x,y); cx.rotate(rot);
+  cx.fillStyle="#6d4a2c"; cx.fillRect(-13,-16,26,32);
+  cx.fillStyle="#caa06a"; cx.fillRect(-13,-16,26,8);
+  cx.fillStyle="#4a3320"; cx.fillRect(-9,-4,18,4); cx.fillRect(-9,5,18,4);
+  cx.restore();
+}
+
+/* ---------- "text from Dad" phone sprite ---------- */
+function drawPhone(revealed){
+  // revealed = how many bubbles to show (0..3)
+  bg("#20303a","#101b22");
+  const px=W/2-110, py=24, pw=220, ph=312;
+  // body
+  cx.fillStyle="#0c0c10"; roundRect(px-6,py-6,pw+12,ph+12,26); cx.fill();
+  cx.fillStyle="#f2f2f4"; roundRect(px,py,pw,ph,20); cx.fill();
+  // status bar
+  cx.fillStyle="#0c0c10"; cx.font="11px Courier New"; cx.textAlign="left";
+  cx.fillText("9:41", px+14, py+18); cx.textAlign="right"; cx.fillText("▮▮▮ ▂▄▆", px+pw-12, py+18); cx.textAlign="left";
+  // header
+  cx.fillStyle="#3f6d3a"; cx.fillRect(px,py+24,pw,30);
+  cx.fillStyle="#fff"; cx.font="bold 13px Courier New"; cx.textAlign="center";
+  cx.fillText("Dad  📶", px+pw/2, py+44); cx.textAlign="left";
+  // bubbles
+  const bubbles=[
+    {side:'in',  text:"KUDOS!"},
+    {side:'out', text:"we are having a fun time and miss you and mom"},
+    {side:'in',  text:"OK"},
+  ];
+  let yy=py+72;
+  for(let i=0;i<bubbles.length && i<revealed;i++){
+    yy = drawBubble(bubbles[i].text, bubbles[i].side, px, py, pw, yy);
+  }
+}
+function drawBubble(text, side, px, py, pw, yy){
+  cx.font="12px Courier New";
+  const maxW=150, words=text.split(' '); let lines=[], cur="";
+  for(const w of words){ const t=cur?cur+" "+w:w; if(cx.measureText(t).width>maxW && cur){ lines.push(cur); cur=w; } else cur=t; }
+  if(cur) lines.push(cur);
+  const bw=Math.min(maxW+20, Math.max(...lines.map(l=>cx.measureText(l).width))+20);
+  const bh=lines.length*16+12;
+  const bx = side==='in' ? px+12 : px+pw-12-bw;
+  cx.fillStyle = side==='in' ? "#e2e2e6" : "#2f6bd6";
+  roundRect(bx, yy, bw, bh, 12); cx.fill();
+  cx.fillStyle = side==='in' ? "#111" : "#fff"; cx.textAlign="left";
+  lines.forEach((l,i)=> cx.fillText(l, bx+10, yy+18+i*16));
+  return yy + bh + 10;
+}
+function roundRect(x,y,w,h,r){ cx.beginPath(); cx.moveTo(x+r,y); cx.arcTo(x+w,y,x+w,y+h,r); cx.arcTo(x+w,y+h,x,y+h,r); cx.arcTo(x,y+h,x,y,r); cx.arcTo(x,y,x+w,y,r); cx.closePath(); }
+
 function drawScene(kind){
   cx.clearRect(0,0,W,H);
   if(kind==='forest'){
@@ -233,6 +369,29 @@ function drawScene(kind){
     drawBrothers();
     // fog overlay
     for(let i=0;i<5;i++){ cx.fillStyle="rgba(230,232,228,"+rnd(.15,.3)+")"; cx.fillRect(0, 120+i*45, W, 40); }
+  } else if(kind==='bearAttack'){
+    bg("#7d9a86","#a7b58e");
+    for(let i=0;i<5;i++){ drawTree(60+i*36, 210+i*20, 1.4+i*0.3, "#28402c"); }
+    for(let i=0;i<5;i++){ drawTree(W-60-i*36, 210+i*20, 1.4+i*0.3, "#223a26"); }
+    cx.fillStyle="#6b4a2a"; cx.fillRect(0,300,W,60);
+    drawBrothers();
+    drawBear(180, 320, 1.5, 'rear');
+  } else if(kind==='moose'){
+    bg("#b9c2c4","#cdd3cf");
+    for(let i=0;i<6;i++){ drawTree(70+i*130, 230+((i%2)*18), 1.4, "rgba(40,60,45,"+(0.55-i*0.06)+")"); }
+    cx.fillStyle="#6b5a3a"; cx.fillRect(0,300,W,60);
+    drawMoose(210, 320, 1.5);
+    drawBrothers();
+  } else if(kind==='tidepool'){
+    bg("#a9c6d4","#d8e2c8");
+    cx.fillStyle="#6b3a28"; cx.fillRect(0,120,W,240);  // exposed red mud at low tide
+    cx.fillStyle="#2f6470"; cx.beginPath(); cx.ellipse(W/2,250,300,90,0,0,7); cx.fill(); // pool
+    cx.strokeStyle="#4a8896"; cx.lineWidth=2; cx.beginPath(); cx.ellipse(W/2,250,300,90,0,0,7); cx.stroke();
+  } else if(kind==='ravine'){
+    bg("#8fb0bf","#b9c4a8");
+    cx.fillStyle="#5a3f28"; cx.beginPath(); cx.moveTo(0,120); cx.lineTo(340,120); cx.lineTo(200,360); cx.lineTo(0,360); cx.fill();
+    cx.fillStyle="#4a3320"; cx.beginPath(); cx.moveTo(W,120); cx.lineTo(460,120); cx.lineTo(600,360); cx.lineTo(W,360); cx.fill();
+    cx.fillStyle="#2f6470"; cx.fillRect(0,330,W,30); // creek at bottom
   } else if(kind==='end'){
     bg("#f3c98a","#d98a4a"); // sunset harbour
     cx.fillStyle="#c76a3a"; cx.beginPath(); cx.arc(W/2,150,40,0,7); cx.fill();
@@ -264,6 +423,22 @@ function drawHUD(){
   cx.fillStyle="#eaddc0"; cx.font="9px Courier New";
   cx.fillText(S.tide>70?"HIGH":S.tide<35?"LOW":"MID", 730, 20);
   cx.textAlign="left";
+  drawGearStrip();
+}
+// small gear row bottom-left: kept items bright, lost items red + struck
+function drawGearStrip(){
+  if(!S.gear) return;
+  const keys=Object.keys(GEAR_INFO); let gx=10; const gy=H-8;
+  cx.font="14px Courier New"; cx.textAlign="left";
+  cx.fillStyle="rgba(20,12,6,.6)"; cx.fillRect(4,H-26,keys.length*30+6,22);
+  keys.forEach(k=>{
+    const have=S.gear[k];
+    cx.globalAlpha = have?1:0.5;
+    cx.fillText(GEAR_INFO[k].icon, gx, gy);
+    if(!have){ cx.strokeStyle="#e04a3a"; cx.lineWidth=2; cx.beginPath(); cx.moveTo(gx-1,gy-12); cx.lineTo(gx+18,gy+3); cx.stroke(); }
+    gx+=30;
+  });
+  cx.globalAlpha=1;
 }
 
 /* ============================================================
@@ -323,6 +498,10 @@ function renderTrail(){
   setHint(partyLine());
   addButton("⛰ Travel On", ()=>advance(), "go");
   addButton("🔥 Make Camp & Rest", ()=>{ S.screen='CAMP'; render(); }, "alt");
+  // Foraging is worthwhile at low/mid tide when the flats and pools are exposed
+  const canForage = S.tide < 55;
+  const fb = addButton(canForage?"🎣 Forage Tide Pools":"🎣 Forage (tide too high)", ()=>startForage(), "alt");
+  if(!canForage) fb.disabled = true;
   addButton("🎒 Check Party", ()=>showStatus());
   if(remain<=0){ /* safety */ }
 }
@@ -332,14 +511,30 @@ function partyLine(){
     if(b.down) return `<b style="color:#9e3b2f">${b.name}: DOWN</b>`;
     const warn = b.health<35?' ⚠':'';
     return `${b.name} — HP ${Math.round(b.health)} · EN ${Math.round(b.energy)} · MO ${Math.round(b.morale)}${warn}`;
-  }).join('<br>') + `<br><span style="color:#6b5636">Food: ${Math.round(S.food)} rations · Tide: ${tideWord()}</span>`;
+  }).join('<br>') + `<br><span style="color:#6b5636">Food: ${Math.round(S.food)} rations · Tide: ${tideWord()}</span>`
+   + `<br>${gearLine()}`;
+}
+function gearLine(){
+  return "Gear: " + Object.keys(GEAR_INFO).map(k=>{
+    const g=GEAR_INFO[k];
+    return S.gear[k]
+      ? `<span title="${g.label}">${g.icon}</span>`
+      : `<span style="color:#9e3b2f;text-decoration:line-through" title="${g.lost}">${g.icon}</span>`;
+  }).join(' ');
 }
 function tideWord(){ return (S.tide>70?"HIGH ("+(S.tideRising?"rising":"falling")+")":S.tide<35?"LOW ("+(S.tideRising?"rising":"falling")+")":"MID ("+(S.tideRising?"rising":"falling")+")"); }
 
 function showStatus(){
+  const gearHtml = Object.keys(GEAR_INFO).map(k=>{
+    const g=GEAR_INFO[k];
+    return S.gear[k]
+      ? `${g.icon} ${g.label}`
+      : `<span style="color:#9e3b2f">${g.icon} ${g.label} — lost (${g.lost})</span>`;
+  }).join('<br>   ');
   setMsg(`<b>The Party</b>\n\n`+
     S.brothers.map(b=>`${b.name}${b.down?' — DOWN':''}\n   Health ${Math.round(b.health)} / Energy ${Math.round(b.energy)} / Morale ${Math.round(b.morale)}`).join('\n\n')+
     `\n\nFood: ${Math.round(S.food)} rations   Day ${S.day}   Tide: ${tideWord()}`);
+  setHint(`<b>Gear</b><br>   ${gearHtml}`);
   clearButtons();
   addButton("← Back", ()=>render());
 }
@@ -365,8 +560,9 @@ function advance(){
   const eaters = aliveBrothers().length;
   S.food = Math.max(0, S.food - eaters*rnd(1.4,2.2));
   tickTide(irnd(1,2));
+  const bootsDrain = S.gear.boots ? 0 : rnd(3,6);   // no boots → blistered feet, faster drain
   aliveBrothers().forEach(b=>{
-    b.energy = clamp(b.energy - rnd(6,12));
+    b.energy = clamp(b.energy - rnd(6,12) - bootsDrain);
     if(S.food<=0){ b.health=clamp(b.health-rnd(6,11)); b.morale=clamp(b.morale-rnd(4,8)); }
     else if(b.energy<25){ b.health=clamp(b.health-rnd(1,4)); }
     if(b.morale<25) b.energy=clamp(b.energy-2);
@@ -403,6 +599,17 @@ function renderEvent(){
   setHint(partyLine());
   e.options.forEach(o=> addButton(o.label, ()=>{
     const res = o.do();
+    // An option can launch a mini-game: return {miniGame, ctx}. The game runs,
+    // shows the Dad-text interstitial, then routes back to the event result.
+    if(res && res.miniGame){
+      const title=e.title, scene=e.scene;
+      launchMiniGame(res.miniGame, res.ctx||{}, (summary)=>{
+        S.pending={result:summary, title, scene:res.resultScene||scene};
+        if(checkAllDown()) return;
+        showEventResult();
+      });
+      return;
+    }
     S.pending={result:res, title:e.title, scene:e.scene};
     if(checkAllDown()) return;
     showEventResult();
@@ -424,31 +631,63 @@ function moraleAll(d){ aliveBrothers().forEach(b=>b.morale=clamp(b.morale+d)); }
 function energyAll(d){ aliveBrothers().forEach(b=>b.energy=clamp(b.energy+d)); }
 function loseFood(min,max){ const n=Math.round(rnd(min,max)); S.food=Math.max(0,S.food-n); return n; }
 function gainFood(min,max){ const n=Math.round(rnd(min,max)); S.food+=n; return n; }
+// gear helpers
+function carriedGear(){ return Object.keys(GEAR_INFO).filter(k=>S.gear[k]); }
+function loseGear(k){ if(S.gear[k]){ S.gear[k]=false; } return GEAR_INFO[k]; }
 
 const EVENTS = [
   // --- Black bear ---
-  ()=>({title:"Black Bear on the Trail", scene:'forest',
-    text:"A black bear rears up where the path bends through the spruce. It huffs and clacks its jaw. What do you do?",
+  ()=>({title:"Black Bear on the Trail", scene:'bearAttack',
+    text:"A black bear rears up where the path bends through the spruce. It huffs and clacks its jaw — and starts closing the distance. What do you do?",
     options:[
+      {label:"🐻 Stand your ground & scare it off", cls:"go", do:()=>({miniGame:'bear', resultScene:'bearAttack'})},
       {label:"Back away slowly", cls:"alt", do:()=>{
         if(Math.random()<0.75){ moraleAll(-4); return "You give it room and speak low. The bear drops to all fours and ambles off. Hearts pounding, you carry on."; }
         const b=damageRandom(14,26); return `The bear bluff-charges! ${b?b.name:"Someone"} stumbles back and takes a swipe — a nasty gash before it breaks off. (Animal attack!)`;
-      }},
-      {label:"Make yourselves big & shout", do:()=>{
-        if(Math.random()<0.6){ moraleAll(3); return "Three brothers roaring and waving trekking poles is a lot of bear. It thinks better of it and crashes off into the brush."; }
-        const n=loseFood(6,10); const b=damageRandom(8,18); return `The noise startles it the wrong way — it lunges through camp, scattering gear. You lose ${n} rations and ${b?b.name:"one of you"} is clawed. (Animal attack!)`;
       }},
       {label:"Run for it", cls:"", do:()=>{
         const b=damageRandom(16,30); moraleAll(-8); return `Never run from a bear. It gives chase for thirty terrifying metres. ${b?b.name:"Someone"} takes a bad hit before it loses interest. (Animal attack!)`;
       }},
     ]}),
   // --- Moose ---
-  ()=>({title:"A Bull Moose", scene:'fog',
-    text:"A bull moose stands square in the trail, water dripping from its muzzle. It is enormous, and it does not move.",
+  ()=>({title:"A Bull Moose", scene:'moose',
+    text:"A bull moose stands square in the trail, water dripping from its muzzle. It is enormous, and it does not move. You'll have to back away without spooking it.",
     options:[
-      {label:"Wait it out", cls:"alt", do:()=>{ energyAll(-6); moraleAll(-2); return "You sit and wait. Twenty long minutes later it wanders off. You've lost time and daylight, but no blood spilled."; }},
-      {label:"Detour through the brush", do:()=>{ if(Math.random()<0.7){energyAll(-10);return "You bushwhack a wide loop around it. Exhausting, but safe.";} const b=damageRandom(6,14); return `The detour is steep and slick. ${b?b.name:"One brother"} slips on wet roots and twists an ankle.`; }},
+      {label:"🫎 Ease back slowly (standoff)", cls:"go", do:()=>({miniGame:'moose', resultScene:'moose'})},
+      {label:"Detour through the brush", cls:"alt", do:()=>{ if(Math.random()<0.7){energyAll(-10);return "You bushwhack a wide loop around it. Exhausting, but safe.";} const b=damageRandom(6,14); return `The detour is steep and slick. ${b?b.name:"One brother"} slips on wet roots and twists an ankle.`; }},
     ]}),
+  // --- Lost equipment: over the ravine edge ---
+  ()=>{
+    const stake = carriedGear().length ? pick(carriedGear()) : null;
+    if(!stake){ // nothing left to lose — degrade to a morale scare
+      return {title:"Loose Footing", scene:'ravine',
+        text:"On a clifftop scramble the ground crumbles underfoot. Heart-stopping, but you catch yourselves in time.",
+        options:[{label:"Catch your breath", cls:"go", do:()=>{ moraleAll(-3); return "Nothing lost but a few years off your lives."; }}]};
+    }
+    const gi=GEAR_INFO[stake];
+    return {title:"Gear Over the Edge", scene:'ravine',
+      text:`On a narrow clifftop scramble a pack slips loose — your ${gi.label.toLowerCase()} goes tumbling down the ravine toward the creek. There's a ledge it might catch on.`,
+      options:[
+        {label:`🧗 Scramble down after the ${gi.label.toLowerCase()}`, cls:"go", do:()=>({miniGame:'recover', ctx:{gear:stake}, resultScene:'ravine'})},
+        {label:"Let it go — too dangerous", cls:"alt", do:()=>{ loseGear(stake); moraleAll(-6); return `You watch your ${gi.label.toLowerCase()} bounce into the creek far below. From here on: ${gi.lost}.`; }},
+      ]};
+  },
+  // --- Lost equipment: swept fording ---
+  ()=>{
+    const stake = carriedGear().length ? pick(carriedGear()) : null;
+    if(!stake){
+      return {title:"Cold Dunking", scene:'coast',
+        text:"A boot slips on the ford and you go in to the waist. Freezing, but everything's lashed down tight.",
+        options:[{label:"Wring out and push on", cls:"go", do:()=>{ energyAll(-6); return "Soaked and shivering, but no kit lost."; }}]};
+    }
+    const gi=GEAR_INFO[stake];
+    return {title:"Swept Downstream", scene:'coast',
+      text:`Mid-ford the current rips a strap and your ${gi.label.toLowerCase()} gets swept off, bobbing downstream toward the bay.`,
+      options:[
+        {label:`🏊 Chase it down the channel`, cls:"go", do:()=>({miniGame:'recover', ctx:{gear:stake}, resultScene:'coast'})},
+        {label:"Save yourself — let it go", cls:"alt", do:()=>{ loseGear(stake); moraleAll(-6); return `You watch your ${gi.label.toLowerCase()} vanish into the Fundy chop. From here on: ${gi.lost}.`; }},
+      ]};
+  },
   // --- Raccoon / food theft ---
   ()=>({title:"Raided Cache", scene:'camp',
     text:"You wake to shredded packaging. A raccoon — or a whole gang of them — got into the food bag overnight.",
@@ -495,16 +734,26 @@ const EVENTS = [
    ============================================================ */
 function renderCamp(){
   drawScene('camp');
-  setMsg(`<b>Camp</b>\n\nYou pitch the tents and get a fire going. Resting the night restores energy and morale but costs a day and rations.`);
+  const noTent = !S.gear.tent, noStove = !S.gear.stove;
+  let warn = "";
+  if(noTent) warn += "\n\n⚠ No tent — you sleep rough and cold; rest heals less.";
+  if(noStove) warn += "\n\n⚠ No stove — only cold food tonight; meals won't mend wounds.";
+  setMsg(`<b>Camp</b>\n\nYou make camp and settle in. Resting the night restores energy and morale but costs a day and rations.${warn}`);
   setHint(partyLine());
   addButton("😴 Rest the night", ()=>{
     const eaters=aliveBrothers().length;
     S.food=Math.max(0,S.food-eaters*rnd(2,3));
     S.day++;
-    aliveBrothers().forEach(b=>{ b.energy=clamp(b.energy+rnd(22,34)); b.morale=clamp(b.morale+rnd(10,18));
-      if(S.food>0) b.health=clamp(b.health+rnd(4,9)); });
+    const eMul = noTent?0.5:1, mMul = noTent?0.5:1;
+    aliveBrothers().forEach(b=>{
+      b.energy=clamp(b.energy+rnd(22,34)*eMul);
+      b.morale=clamp(b.morale+rnd(10,18)*mMul - (noTent?4:0));
+      if(S.food>0 && !noStove) b.health=clamp(b.health+rnd(4,9)); // stove needed to cook a healing meal
+    });
     tickTide(irnd(2,4));
-    S.log = S.food<=0 ? "A cold, hungry night — rest, but empty bellies." : "A good night's rest. The brothers wake with fresh legs.";
+    S.log = S.food<=0 ? "A cold, hungry night — rest, but empty bellies."
+          : noTent ? "A rough night under the stars — you wake stiff and damp."
+          : "A good night's rest. The brothers wake with fresh legs.";
     S.screen='TRAIL'; render();
   }, "go");
   addButton("← Keep hiking instead", ()=>{ S.screen='TRAIL'; render(); });
@@ -574,7 +823,7 @@ function skipCrossing(){
     (hurt?`${hurt} brother(s) get knocked down and bruised. `:`Somehow everyone keeps their feet. `)+
     (foodLost?`${foodLost} rations wash away. `:``)+
     `You scramble up the far bank, soaked.`;
-  finishCrossing();
+  afterMiniGame(S.log, finishCrossing);
 }
 
 function mgLoop(){
@@ -617,7 +866,8 @@ function mgWin(){
   S.log = fails
     ? `You get everyone across, but ${fails} mistimed the surge and were briefly swept — battered but alive on the far bank.`
     : `Textbook. Each brother waited for the low-water window and crossed clean. You beat the Fundy tide.`;
-  drawCrossing(); setTimeout(finishCrossing, 500);
+  S.tally.rivers++;
+  drawCrossing(); setTimeout(()=>afterMiniGame(S.log, finishCrossing), 500);
 }
 function mgFlood(){
   mg.over=true; endCrossingListeners();
@@ -625,7 +875,8 @@ function mgFlood(){
   for(let i=0;i<stranded;i++){ const b=mg.idxOrder[mg.crossed+i]; if(b){ b.health=clamp(b.health-rnd(18,30)); b.morale=clamp(b.morale-12); if(b.health<=0){b.health=0;b.down=true;} } }
   loseFood(4,9);
   S.log = `The channel floods before you're all across! ${stranded} brother(s) are caught by the incoming tide and hauled out half-drowned. A hard, cold lesson in Fundy timing.`;
-  drawCrossing(); setTimeout(finishCrossing, 500);
+  S.tally.rivers++;
+  drawCrossing(); setTimeout(()=>afterMiniGame(S.log, finishCrossing), 500);
 }
 function finishCrossing(){
   if(checkAllDown()) return;
@@ -701,6 +952,287 @@ function drawMiniHiker(x,y,wet){
 }
 
 /* ============================================================
+   SHARED MINI-GAME HARNESS
+   ============================================================ */
+let mgTapHandler=null;
+function mgKeyGeneric(e){ if(e.code==='Space'){ e.preventDefault(); if(mgTapHandler) mgTapHandler(); } }
+function mgClickGeneric(){ if(mgTapHandler) mgTapHandler(); }
+function mgAttachInput(fn){ mgTapHandler=fn; window.addEventListener('keydown', mgKeyGeneric); cv.addEventListener('click', mgClickGeneric); }
+function mgDetachInput(){ mgTapHandler=null; window.removeEventListener('keydown', mgKeyGeneric); cv.removeEventListener('click', mgClickGeneric); }
+function mgTeardown(){ mgDetachInput(); if(mg&&mg.raf) cancelAnimationFrame(mg.raf); }
+// finish a game: teardown, run the Dad-text interstitial, then the game's continuation
+function mgFinish(summary){ const cb=mg.onFinish; mgTeardown(); afterMiniGame(summary, ()=>cb(summary)); }
+
+// dispatch for event-launched mini-games
+function launchMiniGame(type, ctx, onFinish){
+  S.screen='MINIGAME';
+  if(type==='bear') startBearDefense(ctx,onFinish);
+  else if(type==='moose') startMooseStandoff(ctx,onFinish);
+  else if(type==='recover') startRecovery(ctx,onFinish);
+}
+
+// shared meter widget
+function drawMeter(x,y,w,h,frac,color,label){
+  cx.fillStyle="rgba(20,12,6,.8)"; cx.fillRect(x-4,y-4,w+8,h+8);
+  cx.fillStyle="#2c3238"; cx.fillRect(x,y,w,h);
+  cx.fillStyle=color; cx.fillRect(x,y,w*clamp(frac,0,1),h);
+  cx.strokeStyle="#eaddc0"; cx.lineWidth=2; cx.strokeRect(x,y,w,h);
+  if(label){ cx.fillStyle="#eaddc0"; cx.font="12px Courier New"; cx.textAlign="center"; cx.fillText(label, x+w/2, y+h-4); cx.textAlign="left"; }
+}
+
+/* ============================================================
+   "TEXT FROM DAD" INTERSTITIAL (after every mini-game)
+   ============================================================ */
+function afterMiniGame(summary, onContinue){
+  if(aliveBrothers().length===0){ onContinue(); return; }  // skip the gag if the party is wiped
+  showKudosPhone(summary, onContinue);
+}
+function showKudosPhone(summary, onContinue){
+  mg=null;
+  let reveal=0, t=0, done=false;
+  clearButtons(); setHint("");
+  setMsg(`<b>📱 A text buzzes in… it's Dad.</b>`);
+  (function loop(){
+    t++;
+    if(t%34===0 && reveal<3) reveal++;
+    drawPhone(reveal);
+    if(reveal>=3 && !done){
+      done=true;
+      setMsg(`<b>📱 A text from Dad.</b>\n\n<b>Result:</b> ${summary}`);
+      addButton("Continue →", onContinue, "go");
+      return; // stop animating
+    }
+    requestAnimationFrame(loop);
+  })();
+}
+
+/* ============================================================
+   MINI-GAME: BEAR DEFENSE  (headline animal-attack visuals)
+   ============================================================ */
+function startBearDefense(ctx, onFinish){
+  mg={ t:0, scare:0, dist:1.0, phase:'noise', phaseT:80, slash:0, onFinish, raf:null, over:false };
+  setMsg(`<b>🐻 Bear Defense</b>\n\nBang pots and roar during the GREEN "MAKE NOISE!" windows to fill the SCARE meter. When the bear REARS to swipe (RED), FREEZE — tap then and it mauls you.`);
+  setHint(`Tap SPACE / press Make Noise during green. Scare it off before it reaches you.`);
+  clearButtons();
+  addButton("📣 Make Noise!", bearTap, "go");
+  mgAttachInput(bearTap);
+  bearLoop();
+}
+function bearTap(){
+  if(!mg||mg.over) return;
+  if(mg.phase==='noise'){ mg.scare=clamp(mg.scare+9); mg.dist=Math.min(1.05, mg.dist+0.05); }
+  else { mg.scare=clamp(mg.scare-7); mg.slash=9; kickShake(14); kickFlash(0.6); damageRandom(5,12); }
+}
+function bearLoop(){
+  if(!mg||mg.over) return;
+  mg.t++; fxTick(); mg.phaseT--; mg.dist -= 0.0017; if(mg.slash>0) mg.slash--;
+  if(mg.phaseT<=0){
+    if(mg.phase==='noise'){ mg.phase='danger'; mg.phaseT=irnd(30,42); }
+    else { mg.phase='noise'; mg.phaseT=Math.max(45, 80 - Math.floor(mg.t*0.03)); } // windows shrink → ramps up
+  }
+  drawBearGame();
+  if(aliveBrothers().length===0){ mg.over=true; mgTeardown(); S.tally.bears++;
+    return mgFinish(`The bear overwhelms the party before you can drive it off. (Animal attack!)`); }
+  if(mg.scare>=100){ mg.over=true; mgTeardown(); moraleAll(6); S.tally.bears++;
+    return mgFinish(`You stood your ground — pots clanging, three brothers roaring, arms wide — until the bear lost its nerve and crashed off into the spruce. Rattled, but whole.`); }
+  if(mg.dist<=0){ mg.over=true; mgTeardown(); const b=damageRandom(14,26); let extra="";
+    if(Math.random()<0.4 && carriedGear().length){ const g=loseGear(pick(carriedGear())); extra=` It shredded a pack in the chaos — your ${g.label.toLowerCase()} is wrecked (${g.lost}).`; }
+    moraleAll(-6); S.tally.bears++;
+    return mgFinish(`The bear closed the gap and bowled into camp — ${b?b.name:"someone"} took a mauling before it broke off.${extra} (Animal attack!)`); }
+  mg.raf=requestAnimationFrame(bearLoop);
+}
+function drawBearGame(){
+  fxPre();
+  bg("#7d9a86","#a7b58e");
+  for(let i=0;i<5;i++){ drawTree(60+i*40,214+i*14,1.5+i*0.25,"#28402c"); }
+  cx.fillStyle="#6b4a2a"; cx.fillRect(0,300,W,60);
+  drawBrothers();
+  const approach = 1-Math.min(1,mg.dist);
+  const bx = 120 + approach*180, bscale = 1.15 + approach*0.85;
+  drawBear(bx, 322, bscale, mg.phase==='danger'?'rear':'walk');
+  if(mg.slash>0) drawClawSlash(bx+40, 270);
+  // scare meter
+  drawMeter(120, 40, 560, 18, mg.scare/100, "#3f9d4a", `SCARE  ${Math.round(mg.scare)}%`);
+  // distance-to-you danger bar
+  drawMeter(120, 66, 560, 12, 1-mg.dist, mg.dist<0.35?"#c0392b":"#d1a12f", null);
+  // phase prompt
+  cx.textAlign="center"; cx.font="bold 22px Courier New";
+  if(mg.phase==='noise'){ cx.fillStyle="#1f7a2f"; cx.fillText("▶ MAKE NOISE! — TAP! ◀", W/2, 118); }
+  else { cx.fillStyle="#b81f1f"; cx.fillText("✋ IT'S REARING — FREEZE!", W/2, 118); }
+  cx.textAlign="left";
+  fxPost();
+}
+
+/* ============================================================
+   MINI-GAME: MOOSE STANDOFF
+   ============================================================ */
+function startMooseStandoff(ctx, onFinish){
+  mg={ t:0, dist:0, need:100, state:'calm', stateT:70, spooks:0, charge:0, onFinish, raf:null, over:false };
+  setMsg(`<b>🫎 Moose Standoff</b>\n\nBack away only when the moose is CALM (green). If it's AGITATED (red) and you move, it charges. Ease all the way back to SAFE.`);
+  setHint(`Tap SPACE / press Back Away during green. Reach 100% distance to escape.`);
+  clearButtons();
+  addButton("👣 Back Away", mooseTap, "go");
+  mgAttachInput(mooseTap);
+  mooseLoop();
+}
+function mooseTap(){
+  if(!mg||mg.over) return;
+  if(mg.state==='calm'){ mg.dist=Math.min(mg.need, mg.dist+13); }
+  else { mg.spooks++; mg.charge=12; kickShake(12); kickFlash(0.5); damageRandom(6,14); mg.dist=Math.max(0,mg.dist-16); moraleAll(-3); }
+}
+function mooseLoop(){
+  if(!mg||mg.over) return;
+  mg.t++; fxTick(); mg.stateT--; if(mg.charge>0) mg.charge--;
+  if(mg.stateT<=0){
+    if(mg.state==='calm'){ mg.state='agitated'; mg.stateT=irnd(28,44); }
+    else { mg.state='calm'; mg.stateT=Math.max(38, 70 - Math.floor(mg.t*0.02)); }
+  }
+  drawMooseGame();
+  if(aliveBrothers().length===0){ mg.over=true; mgTeardown(); S.tally.moose++;
+    return mgFinish(`The moose charges through the party before you reach safety. (Animal attack!)`); }
+  if(mg.dist>=mg.need){ mg.over=true; mgTeardown(); S.tally.moose++; moraleAll(mg.spooks?0:4);
+    return mgFinish(mg.spooks
+      ? `You back off to safe ground — with a couple of heart-stopping stumbles when it flared. The moose snorts and turns away.`
+      : `Patient and still, reading every twitch, you ease all the way back. The moose loses interest. Not a hair harmed.`); }
+  mg.raf=requestAnimationFrame(mooseLoop);
+}
+function drawMooseGame(){
+  fxPre();
+  bg("#b9c2c4","#cdd3cf");
+  for(let i=0;i<6;i++){ drawTree(70+i*130, 232+((i%2)*16), 1.4, "rgba(40,60,45,"+(0.5-i*0.05)+")"); }
+  cx.fillStyle="#6b5a3a"; cx.fillRect(0,300,W,60);
+  const agit = mg.state==='agitated';
+  const mx = 230 + (agit?Math.sin(mg.t*0.5)*6:0) - mg.dist*0.6;
+  drawMoose(mx, 322, 1.5);
+  // brothers drift right as they back away
+  cx.save(); cx.translate(mg.dist*1.2, 0); drawBrothers(); cx.restore();
+  drawMeter(120, 40, 560, 18, mg.dist/mg.need, "#3f9d4a", `DISTANCE TO SAFE  ${Math.round(mg.dist)}%`);
+  cx.textAlign="center"; cx.font="bold 22px Courier New";
+  if(agit){ cx.fillStyle="#b81f1f"; cx.fillText("⚠ AGITATED — HOLD STILL!", W/2, 100); }
+  else { cx.fillStyle="#1f7a2f"; cx.fillText("✓ CALM — back away now", W/2, 100); }
+  cx.textAlign="left";
+  fxPost();
+}
+
+/* ============================================================
+   MINI-GAME: TIDAL-POOL FORAGING  (trail action, food)
+   ============================================================ */
+function startForage(){
+  S.screen='MINIGAME';
+  startForageGame({}, (summary)=>{ S.log=summary; S.pending=null; mg=null; S.screen='TRAIL'; render(); });
+}
+function spawnFish(){
+  const dir=Math.random()<0.5?1:-1;
+  return { type:pick(['fish','fish','crab','clam']), x: dir>0?-20:W+20, y: 210+rnd(-45,55), vx: dir*rnd(1.3,3.0), alive:true };
+}
+function startForageGame(ctx, onFinish){
+  const low = S.tide<35;
+  mg={ t:0, timeLeft:600, caught:0, fish:[], splash:0, onFinish, raf:null, over:false };
+  const n = 4 + (low?2:0);
+  for(let i=0;i<n;i++) mg.fish.push(spawnFish());
+  setMsg(`<b>🎣 Foraging the Tide Pools</b>\n\nTap when a fish, crab or clam is inside the bright STRIKE ZONE to grab it. ${low?'Dead low tide — the pools are teeming!':'The tide is dropping — a few are out.'}`);
+  setHint(`Tap SPACE / press Strike. Every catch is food for the trail.`);
+  clearButtons();
+  addButton("🫳 Strike!", forageTap, "go");
+  addButton("Stop foraging", ()=>forageEnd(), "");
+  mgAttachInput(forageTap);
+  forageLoop();
+}
+function forageTap(){
+  if(!mg||mg.over) return;
+  const zx=W/2, half=42;
+  const hit = mg.fish.find(f=>f.alive && Math.abs(f.x-zx)<half);
+  if(hit){ hit.alive=false; mg.caught++; mg.splash=10; S.tally.fish++; }
+  else { mg.splash=5; }
+}
+function forageLoop(){
+  if(!mg||mg.over) return;
+  mg.t++; mg.timeLeft--; if(mg.splash>0) mg.splash--;
+  for(let i=0;i<mg.fish.length;i++){ const f=mg.fish[i];
+    if(!f.alive || f.x<-30 || f.x>W+30){ mg.fish[i]=spawnFish(); continue; } f.x+=f.vx; }
+  drawForageGame();
+  if(mg.timeLeft<=0){ return forageEnd(); }
+  mg.raf=requestAnimationFrame(forageLoop);
+}
+function forageEnd(){
+  if(!mg||mg.over) return; mg.over=true; mgTeardown();
+  const gained = mg.caught*3; S.food+=gained; energyAll(-6); tickTide(1);
+  moraleAll(mg.caught?4:-2);
+  const summary = mg.caught
+    ? `You worked the pools and hauled out ${mg.caught} catch${mg.caught>1?'es':''} — about ${gained} rations of fresh fish, crab and clams.`
+    : `The pools came up empty this time. Tired and a little discouraged, you head back to the trail.`;
+  mgFinish(summary);
+}
+function drawForageGame(){
+  fxPre();
+  bg("#a9c6d4","#d8e2c8");
+  cx.fillStyle="#6b3a28"; cx.fillRect(0,120,W,240);
+  cx.fillStyle="#2f6470"; cx.beginPath(); cx.ellipse(W/2,240,320,100,0,0,7); cx.fill();
+  // strike zone band
+  const zx=W/2, half=42;
+  cx.fillStyle="rgba(244,208,63,.28)"; cx.fillRect(zx-half,140,half*2,200);
+  cx.strokeStyle="#f4d03f"; cx.lineWidth=2; cx.strokeRect(zx-half,140,half*2,200);
+  cx.fillStyle="#eaddc0"; cx.font="11px Courier New"; cx.textAlign="center"; cx.fillText("STRIKE ZONE", zx, 152); cx.textAlign="left";
+  // fish
+  mg.fish.forEach(f=>{ if(f.alive) drawFish(f.x,f.y,f.type); });
+  if(mg.splash>0){ cx.fillStyle="rgba(255,255,255,.6)"; for(let k=0;k<8;k++) cx.fillRect(zx-20+irnd(0,40), 220+irnd(0,40),3,3); }
+  // HUD
+  cx.fillStyle="rgba(20,12,6,.72)"; cx.fillRect(0,0,W,26);
+  cx.fillStyle="#eaddc0"; cx.font="13px Courier New";
+  cx.fillText(`Caught: ${mg.caught}  (+${mg.caught*3} food)`, 12, 18);
+  cx.fillText(`Time: ${Math.ceil(mg.timeLeft/60)}s`, 320, 18);
+  fxPost();
+}
+
+/* ============================================================
+   MINI-GAME: EQUIPMENT RECOVERY  (lost-gear challenge)
+   ============================================================ */
+function startRecovery(ctx, onFinish){
+  const gk=ctx.gear, gi=GEAR_INFO[gk];
+  mg={ t:0, x:0.5, dir:1, speed:2.2, attempts:3, zoneStart:0.42, zoneW:0.16, gear:gk, miss:0, onFinish, raf:null, over:false };
+  setMsg(`<b>🧗 Equipment Recovery</b>\n\nThere goes your ${gi.label.toLowerCase()} — sliding past down the slope. Tap when it's inside the GREEN catch zone to grab it. A few misses and it's gone for good.`);
+  setHint(`Tap SPACE / press Grab. Tries left: ${'●'.repeat(mg.attempts)}`);
+  clearButtons();
+  addButton("✊ Grab!", recoverTap, "go");
+  mgAttachInput(recoverTap);
+  recoverLoop();
+}
+function recoverTap(){
+  if(!mg||mg.over) return;
+  const inZone = mg.x>=mg.zoneStart && mg.x<=mg.zoneStart+mg.zoneW;
+  const gi=GEAR_INFO[mg.gear];
+  if(inZone){ mg.over=true; mgTeardown(); S.tally.gearSaved++;
+    return mgFinish(`Got it! You snatch your ${gi.label.toLowerCase()} back before it's lost — still fully kitted out.`); }
+  mg.attempts--; mg.miss=8; kickShake(6);
+  setHint(`Tap SPACE / press Grab. Tries left: ${'●'.repeat(Math.max(0,mg.attempts))}`);
+  if(mg.attempts<=0){ mg.over=true; mgTeardown(); loseGear(mg.gear);
+    return mgFinish(`It slips away for good. Your ${gi.label.toLowerCase()} — gone — from here on: ${gi.lost}.`); }
+}
+function recoverLoop(){
+  if(!mg||mg.over) return;
+  mg.t++; fxTick(); if(mg.miss>0) mg.miss--;
+  mg.speed = 2.0 + (3-mg.attempts)*0.55;   // faster as tries run out
+  mg.x += mg.dir*mg.speed*0.01; if(mg.x>1){mg.x=1;mg.dir=-1;} if(mg.x<0){mg.x=0;mg.dir=1;}
+  drawRecoverGame();
+  mg.raf=requestAnimationFrame(recoverLoop);
+}
+function drawRecoverGame(){
+  fxPre();
+  drawScene('ravine');   // includes HUD; we overlay the track
+  const bx=90,bw=620,by=250,bh=26;
+  cx.fillStyle="rgba(20,12,6,.8)"; cx.fillRect(bx-6,by-6,bw+12,bh+12);
+  cx.fillStyle="#2c3238"; cx.fillRect(bx,by,bw,bh);
+  cx.fillStyle="#3f9d4a"; cx.fillRect(bx+mg.zoneStart*bw, by, mg.zoneW*bw, bh);   // catch zone
+  cx.strokeStyle="#eaddc0"; cx.lineWidth=2; cx.strokeRect(bx,by,bw,bh);
+  drawPack(bx+mg.x*bw, by+bh/2, Math.sin(mg.t*0.2)*0.3);   // tumbling pack
+  cx.fillStyle="#eaddc0"; cx.font="12px Courier New"; cx.textAlign="center";
+  cx.fillText("CATCH ZONE — grab here", bx+(mg.zoneStart+mg.zoneW/2)*bw, by-12);
+  cx.fillText(`Tries left: ${'●'.repeat(Math.max(0,mg.attempts))}${'○'.repeat(3-Math.max(0,mg.attempts))}`, W/2, by+bh+22);
+  cx.textAlign="left";
+  fxPost();
+}
+
+/* ============================================================
    END SCREEN
    ============================================================ */
 function renderEnd(){
@@ -716,7 +1248,10 @@ function renderEnd(){
       `The brothers couldn't go on — beaten by ${S.food<=0?'hunger':'injury and cold'} somewhere along the Footpath on Day ${S.day}.\n\n`+
       `The Fundy Footpath will still be here. Rest up, pack smarter, and time that tide. Try again.`);
   }
-  setHint(`Final party:<br>`+S.brothers.map(b=>`${b.name}: ${b.down?'<span style="color:#9e3b2f">did not finish</span>':'HP '+Math.round(b.health)}`).join('<br>')+`<br>Reached: ${SEGMENTS[Math.min(S.seg,SEGMENTS.length-1)].name} · Day ${S.day}`);
+  const t=S.tally;
+  setHint(`Final party:<br>`+S.brothers.map(b=>`${b.name}: ${b.down?'<span style="color:#9e3b2f">did not finish</span>':'HP '+Math.round(b.health)}`).join('<br>')+
+    `<br>Reached: ${SEGMENTS[Math.min(S.seg,SEGMENTS.length-1)].name} · Day ${S.day}`+
+    `<br><span style="color:#6b5636">Trail record — 🌊 ${t.rivers} rivers forded · 🐻 ${t.bears} bears faced · 🫎 ${t.moose} moose · 🎣 ${t.fish} caught · 🎒 ${t.gearSaved} gear saved</span>`);
   clearButtons();
   addButton("↺ Hike It Again", ()=>{ S=newState(); render(); }, "go");
 }
