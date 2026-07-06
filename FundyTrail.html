@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fundy Trail — Three Brothers on the Footpath</title>
+<style>
+  :root{
+    --ink:#1c130a; --parch:#e9dcc0; --parch2:#d8c69f; --wood:#5a3d24;
+    --wood2:#3a2716; --gold:#c9962f; --sea:#2b6b7a; --forest:#2f5233;
+    --danger:#9e3b2f; --good:#3f6d3a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:#241811;color:var(--ink);
+    font-family:"Courier New",Courier,monospace;}
+  #app{max-width:820px;margin:0 auto;padding:14px;}
+  h1{font-family:Georgia,"Times New Roman",serif;text-align:center;
+    color:var(--gold);letter-spacing:2px;margin:6px 0 2px;
+    text-shadow:1px 1px 0 #000;font-size:30px;}
+  .subtitle{text-align:center;color:var(--parch2);margin:0 0 10px;font-size:12px;letter-spacing:1px;}
+  #frame{border:6px solid var(--wood);border-radius:8px;
+    background:var(--wood2);box-shadow:0 0 0 2px #000, 0 10px 30px rgba(0,0,0,.6);}
+  #canvas{display:block;width:100%;height:auto;background:#0d1a22;border-bottom:4px solid var(--wood);
+    image-rendering:pixelated;}
+  #panel{background:var(--parch);padding:14px 16px;min-height:150px;
+    border-top:2px solid #000;}
+  #msg{white-space:pre-wrap;font-size:14px;line-height:1.5;min-height:60px;}
+  #msg b{color:var(--wood2)}
+  .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+  button{cursor:pointer;font-family:inherit;font-size:14px;font-weight:bold;
+    background:var(--wood);color:var(--parch);border:2px solid #000;border-radius:4px;
+    padding:9px 14px;box-shadow:0 3px 0 #000;transition:transform .05s;}
+  button:hover{background:#6d4a2c}
+  button:active{transform:translateY(2px);box-shadow:0 1px 0 #000}
+  button:disabled{opacity:.45;cursor:not-allowed;box-shadow:0 3px 0 #000}
+  button.alt{background:var(--sea)}
+  button.alt:hover{background:#357e90}
+  button.go{background:var(--good)}
+  button.go:hover{background:#4f8748}
+  input[type=text]{font-family:inherit;font-size:14px;padding:6px 8px;border:2px solid var(--wood2);
+    border-radius:4px;background:#fff8ea;width:150px;margin:3px 6px 3px 0}
+  label{font-size:13px;display:inline-block;width:70px;text-align:right;margin-right:4px}
+  .fld{margin:4px 0}
+  .hint{font-size:12px;color:#6b5636;margin-top:8px}
+  .load{display:inline-block;margin:6px 8px 6px 0;padding:8px 10px;border:2px solid var(--wood2);
+    border-radius:5px;background:#fff8ea;cursor:pointer;font-size:13px;max-width:230px;vertical-align:top}
+  .load.sel{background:var(--gold);border-color:#000}
+  .load b{display:block;margin-bottom:3px}
+  .credits{text-align:center;color:#8a7350;font-size:11px;margin-top:10px;line-height:1.6}
+</style>
+</head>
+<body>
+<div id="app">
+  <h1>FUNDY TRAIL</h1>
+  <div class="subtitle">Three Brothers on the Bay of Fundy Footpath · A Backcountry Adventure</div>
+  <div id="frame">
+    <canvas id="canvas" width="800" height="360"></canvas>
+    <div id="panel">
+      <div id="msg"></div>
+      <div class="row" id="buttons"></div>
+      <div class="hint" id="hint"></div>
+    </div>
+  </div>
+  <div class="credits">
+    Inspired by <i>The Yukon Trail</i> (MECC, 1994). The Fundy Footpath is a real ~41&nbsp;km wilderness
+    trail between Fundy National Park, NB and St.&nbsp;Martins.<br>Home of the highest tides on Earth — read the tide, or the tide reads you.
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================
+   FUNDY TRAIL — single-file Yukon-Trail-style hiking adventure
+   ============================================================ */
+const cv = document.getElementById('canvas');
+const cx = cv.getContext('2d');
+const W = cv.width, H = cv.height;
+const msgEl = document.getElementById('msg');
+const btnEl = document.getElementById('buttons');
+const hintEl = document.getElementById('hint');
+
+const rnd = (a,b)=>a+Math.random()*(b-a);
+const irnd = (a,b)=>Math.floor(rnd(a,b+1));
+const clamp = (v,a=0,b=100)=>Math.max(a,Math.min(b,v));
+const pick = arr=>arr[Math.floor(Math.random()*arr.length)];
+
+/* -------- Trail segments (Fundy Park -> St. Martins) -------- */
+const SEGMENTS = [
+  {name:"Big Salmon River",   dist:6, river:false, note:"The trailhead. Suspension bridge behind you, wilderness ahead."},
+  {name:"Long Beach Brook",   dist:7, river:true,  note:"A cobble beach where a brook meets the sea — crossable only at low tide."},
+  {name:"Goose Creek",        dist:6, river:true,  note:"Steep ravines drop to a tidal creek far below."},
+  {name:"Little Salmon River",dist:8, river:true,  note:"The big one. A wide tidal river you must ford between the tides."},
+  {name:"Rose Brook",         dist:6, river:true,  note:"Fog rolls thick off the bay here."},
+  {name:"Seely Beach",        dist:5, river:false, note:"Spruce forest and clifftop lookouts over the Bay of Fundy."},
+  {name:"St. Martins",        dist:0, river:false, note:"Sea caves, a harbour, and a hot meal. The end of the Footpath."},
+];
+
+/* -------- Game state -------- */
+let S;
+function newState(){
+  return {
+    screen:'SETUP',
+    loadout:null,
+    day:1,
+    seg:0,               // index into SEGMENTS (current position = trailhead of this seg)
+    distInSeg:0,
+    food:0,
+    tide:30,             // 0 = dead low, 100 = full high
+    tideRising:true,
+    brothers:[
+      {name:"Angus", health:100, energy:100, morale:100, down:false},
+      {name:"Callum",health:100, energy:100, morale:100, down:false},
+      {name:"Duncan",health:100, energy:100, morale:100, down:false},
+    ],
+    pending:null,        // event/minigame context
+    log:"",
+  };
+}
+
+const LOADOUTS = [
+  {id:'lean', name:"Lean & Fast", food:38, note:"Light packs, big miles. Less food but strong morale and energy.",
+    apply:s=>{s.food=38; s.brothers.forEach(b=>{b.energy=100;b.morale=100;});}},
+  {id:'balanced', name:"Well-Provisioned", food:64, note:"Heavy packs, plenty of food. Slower, and the weight wears on you.",
+    apply:s=>{s.food=64; s.brothers.forEach(b=>{b.energy=88;b.morale=94;});}},
+];
+
+/* ============================================================
+   RENDERING — panel + canvas
+   ============================================================ */
+function setMsg(html){ msgEl.innerHTML = html; }
+function setHint(html){ hintEl.innerHTML = html||""; }
+function clearButtons(){ btnEl.innerHTML=""; }
+function addButton(label, fn, cls=""){
+  const b=document.createElement('button');
+  b.textContent=label; if(cls) b.className=cls;
+  b.onclick=fn; btnEl.appendChild(b); return b;
+}
+
+const aliveBrothers = ()=>S.brothers.filter(b=>!b.down);
+
+/* ---------- canvas scene drawing ---------- */
+function bg(top,bot){ const g=cx.createLinearGradient(0,0,0,H); g.addColorStop(0,top); g.addColorStop(1,bot); cx.fillStyle=g; cx.fillRect(0,0,W,H); }
+function star(){ cx.fillStyle="#fff"; for(let i=0;i<60;i++){cx.globalAlpha=rnd(.2,.9);cx.fillRect(irnd(0,W),irnd(0,H*0.5),2,2);} cx.globalAlpha=1; }
+
+function drawTree(x,base,scale,color){
+  cx.fillStyle="#3a2716"; cx.fillRect(x-2*scale,base-14*scale,4*scale,16*scale);
+  cx.fillStyle=color;
+  for(let i=0;i<3;i++){
+    const w=(16-i*4)*scale, y=base-(12+i*10)*scale;
+    cx.beginPath(); cx.moveTo(x,y-12*scale); cx.lineTo(x-w,y); cx.lineTo(x+w,y); cx.closePath(); cx.fill();
+  }
+}
+// three brothers as backpacker silhouettes in the foreground (first-person, over the shoulder)
+function drawBrothers(){
+  const spots=[[300,H-8],[400,H+6],[500,H-4]];
+  const palette=["#3a2a1e","#4a352a","#2e2016"];
+  S.brothers.forEach((b,i)=>{
+    const [x,base]=spots[i];
+    cx.save();
+    if(b.down) cx.globalAlpha=0.35;
+    // legs+body
+    cx.fillStyle=palette[i];
+    cx.fillRect(x-11,base-70,22,48);        // torso/pack
+    cx.fillStyle="#6d4a2c";
+    cx.fillRect(x-13,base-66,26,30);        // backpack
+    cx.fillStyle="#caa06a";                 // pack lid
+    cx.fillRect(x-13,base-66,26,7);
+    // head
+    cx.fillStyle="#c9a27a"; cx.beginPath(); cx.arc(x,base-80,9,0,7); cx.fill();
+    // hat
+    cx.fillStyle=["#7a2f2f","#2f5233","#2f3f6b"][i];
+    cx.fillRect(x-11,base-88,22,5); cx.fillRect(x-7,base-95,14,8);
+    // legs
+    cx.fillStyle="#2e2016"; cx.fillRect(x-9,base-24,7,24); cx.fillRect(x+2,base-24,7,24);
+    cx.restore();
+    // status pip / name
+    cx.fillStyle=b.down?"#7a1f1f":healthColor(b.health);
+    cx.fillRect(x-16,base-108,32,5);
+    cx.fillStyle="#eaddc0"; cx.font="10px Courier New"; cx.textAlign="center";
+    cx.fillText(b.down?"(down)":b.name, x, base-112);
+  });
+  cx.textAlign="left";
+}
+function healthColor(h){ return h>60?"#3f9d4a":h>30?"#d1a12f":"#c0392b"; }
+
+function drawScene(kind){
+  cx.clearRect(0,0,W,H);
+  if(kind==='forest'){
+    bg("#8fb7c9","#c9d7bf");
+    // distant hills
+    cx.fillStyle="#6b8f79"; cx.beginPath(); cx.moveTo(0,180);
+    cx.quadraticCurveTo(200,120,420,175); cx.quadraticCurveTo(620,215,800,165); cx.lineTo(800,360); cx.lineTo(0,360); cx.fill();
+    // sea sliver at right
+    cx.fillStyle="#2b6b7a"; cx.fillRect(560,150,240,30);
+    // trail floor
+    cx.fillStyle="#7a5a34"; cx.beginPath(); cx.moveTo(0,360); cx.lineTo(330,190); cx.lineTo(470,190); cx.lineTo(800,360); cx.fill();
+    cx.fillStyle="#8f6b3f"; cx.beginPath(); cx.moveTo(120,360); cx.lineTo(370,205); cx.lineTo(430,205); cx.lineTo(680,360); cx.fill();
+    // trees flanking
+    for(let i=0;i<5;i++){ drawTree(40+i*30, 210+i*24, 1+i*0.35, "#2f5233"); }
+    for(let i=0;i<5;i++){ drawTree(W-40-i*30, 210+i*24, 1+i*0.35, "#264a2b"); }
+    drawBrothers();
+  } else if(kind==='coast'){
+    bg("#a9c6d4","#d8e2c8");
+    cx.fillStyle="#2b6b7a"; cx.fillRect(0,150,W,120);
+    // waves
+    cx.strokeStyle="#5fa0ad"; cx.lineWidth=2;
+    for(let y=170;y<270;y+=18){ cx.beginPath(); for(let x=0;x<=W;x+=20){cx.lineTo(x, y+Math.sin((x+y)/25)*4);} cx.stroke(); }
+    // red cliffs
+    cx.fillStyle="#8a4b34"; cx.beginPath(); cx.moveTo(0,150); cx.lineTo(0,270); cx.lineTo(140,270);
+    cx.quadraticCurveTo(90,190,60,150); cx.fill();
+    cx.fillStyle="#6b3a28"; cx.fillRect(0,270,W,90);
+    drawBrothers();
+  } else if(kind==='camp'){
+    bg("#0e1630","#243a2f"); star();
+    // moon
+    cx.fillStyle="#f2efd8"; cx.beginPath(); cx.arc(660,70,26,0,7); cx.fill();
+    // treeline silhouettes
+    for(let i=0;i<12;i++){ drawTree(i*70+20, 250+((i%3)*8), 1.6, "#0f1f14"); }
+    cx.fillStyle="#132118"; cx.fillRect(0,250,W,110);
+    // tent
+    cx.fillStyle="#7a3f2f"; cx.beginPath(); cx.moveTo(160,300); cx.lineTo(230,235); cx.lineTo(300,300); cx.fill();
+    cx.fillStyle="#4a241a"; cx.beginPath(); cx.moveTo(230,235); cx.lineTo(300,300); cx.lineTo(258,300); cx.fill();
+    // campfire
+    const fx=460, fy=300;
+    cx.fillStyle="#3a2716"; cx.fillRect(fx-18,fy-2,36,6);
+    for(let i=0;i<3;i++){ cx.fillStyle=["#e25a1c","#f4a020","#ffd94a"][i]; cx.beginPath();
+      const s=16-i*4; cx.moveTo(fx,fy-2); cx.quadraticCurveTo(fx-s,fy-16, fx,fy-30+i*6); cx.quadraticCurveTo(fx+s,fy-16,fx,fy-2); cx.fill(); }
+    cx.fillStyle="rgba(255,180,80,.18)"; cx.beginPath(); cx.arc(fx,fy-6,90,0,7); cx.fill();
+  } else if(kind==='fog'){
+    bg("#b9c2c4","#cdd3cf");
+    for(let i=0;i<6;i++){ drawTree(80+i*130, 220+((i%2)*20), 1.4, "rgba(40,60,45,"+(0.5-i*0.06)+")"); }
+    cx.fillStyle="#7a6a4a"; cx.beginPath(); cx.moveTo(0,360); cx.lineTo(360,210); cx.lineTo(440,210); cx.lineTo(800,360); cx.fill();
+    drawBrothers();
+    // fog overlay
+    for(let i=0;i<5;i++){ cx.fillStyle="rgba(230,232,228,"+rnd(.15,.3)+")"; cx.fillRect(0, 120+i*45, W, 40); }
+  } else if(kind==='end'){
+    bg("#f3c98a","#d98a4a"); // sunset harbour
+    cx.fillStyle="#c76a3a"; cx.beginPath(); cx.arc(W/2,150,40,0,7); cx.fill();
+    cx.fillStyle="#2b5560"; cx.fillRect(0,200,W,160);
+    cx.fillStyle="#123038"; // harbour caves
+    cx.beginPath(); cx.moveTo(60,200); cx.quadraticCurveTo(120,140,180,200); cx.fill();
+    cx.beginPath(); cx.moveTo(200,200); cx.quadraticCurveTo(250,150,300,200); cx.fill();
+    drawBrothers();
+  }
+  drawHUD();
+}
+
+/* ---------- HUD overlay ---------- */
+function drawHUD(){
+  // top bar
+  cx.fillStyle="rgba(20,12,6,.72)"; cx.fillRect(0,0,W,30);
+  cx.fillStyle="#eaddc0"; cx.font="14px Courier New"; cx.textAlign="left";
+  const seg=SEGMENTS[S.seg];
+  const remain = SEGMENTS.slice(S.seg).reduce((a,s)=>a+s.dist,0) - S.distInSeg;
+  cx.fillText(`Day ${S.day}`, 12, 20);
+  cx.fillText(`⌖ ${seg.name}`, 92, 20);
+  cx.fillText(`${Math.max(0,remain)} km to St. Martins`, 300, 20);
+  cx.fillText(`Food ${Math.round(S.food)}`, 540, 20);
+  // tide meter
+  cx.fillText("Tide", 650, 20);
+  cx.strokeStyle="#eaddc0"; cx.strokeRect(690,9,100,14);
+  const tc = S.tide>70?"#c0392b":S.tide<35?"#3f9d4a":"#d1a12f";
+  cx.fillStyle=tc; cx.fillRect(691,10,S.tide*0.98,12);
+  cx.fillStyle="#eaddc0"; cx.font="9px Courier New";
+  cx.fillText(S.tide>70?"HIGH":S.tide<35?"LOW":"MID", 730, 20);
+  cx.textAlign="left";
+}
+
+/* ============================================================
+   SCREENS
+   ============================================================ */
+function render(){
+  clearButtons(); setHint("");
+  switch(S.screen){
+    case 'SETUP': renderSetup(); break;
+    case 'TRAIL': renderTrail(); break;
+    case 'EVENT': renderEvent(); break;
+    case 'MINIGAME': startCrossing(); break;
+    case 'CAMP': renderCamp(); break;
+    case 'END': renderEnd(); break;
+  }
+}
+
+function renderSetup(){
+  clearButtons();
+  drawScene('coast');
+  let names = S.brothers.map(b=>b.name);
+  setMsg(
+    `<b>The Fundy Footpath.</b> Forty-one kilometres of wild coast between Fundy National Park and St. Martins. `+
+    `You and your two brothers have six days of daylight, packs on your backs, and the highest tides on Earth `+
+    `standing between you and the trail's end.\n\nName your party and choose how you'll pack.`
+  );
+  // Build a custom form inside the panel via hint area
+  setHint(
+    `<div class="fld"><label>Eldest</label><input id="n0" type="text" value="${names[0]}" maxlength="10"></div>`+
+    `<div class="fld"><label>Middle</label><input id="n1" type="text" value="${names[1]}" maxlength="10"></div>`+
+    `<div class="fld"><label>Youngest</label><input id="n2" type="text" value="${names[2]}" maxlength="10"></div>`+
+    `<div style="margin-top:10px">`+
+      LOADOUTS.map(l=>`<span class="load ${S.loadout===l.id?'sel':''}" data-l="${l.id}"><b>${l.name}</b>${l.note}</span>`).join('')+
+    `</div>`
+  );
+  hintEl.querySelectorAll('.load').forEach(el=>{
+    el.onclick=()=>{
+      // preserve any names typed so far before re-rendering
+      for(let i=0;i<3;i++){ const f=document.getElementById('n'+i); if(f&&f.value.trim()) S.brothers[i].name=f.value.trim(); }
+      S.loadout=el.dataset.l; renderSetup();
+    };
+  });
+  const startBtn = addButton("▶ Set Out on the Trail", ()=>{
+    for(let i=0;i<3;i++){ const v=document.getElementById('n'+i).value.trim(); if(v) S.brothers[i].name=v; }
+    if(!S.loadout) S.loadout='lean';
+    LOADOUTS.find(l=>l.id===S.loadout).apply(S);
+    S.screen='TRAIL'; S.log=`Day 1 — the brothers leave the Big Salmon River trailhead.`; render();
+  }, "go");
+  if(!S.loadout){ startBtn.disabled=true; startBtn.textContent="▶ Choose a loadout first"; }
+}
+
+function renderTrail(){
+  const seg = SEGMENTS[S.seg];
+  drawScene(seg.river?'coast':'forest');
+  const remain = SEGMENTS.slice(S.seg).reduce((a,s)=>a+s.dist,0) - S.distInSeg;
+  setMsg(`<b>${seg.name}</b> — ${seg.note}\n\n${S.log}`);
+  setHint(partyLine());
+  addButton("⛰ Travel On", ()=>advance(), "go");
+  addButton("🔥 Make Camp & Rest", ()=>{ S.screen='CAMP'; render(); }, "alt");
+  addButton("🎒 Check Party", ()=>showStatus());
+  if(remain<=0){ /* safety */ }
+}
+
+function partyLine(){
+  return S.brothers.map(b=>{
+    if(b.down) return `<b style="color:#9e3b2f">${b.name}: DOWN</b>`;
+    const warn = b.health<35?' ⚠':'';
+    return `${b.name} — HP ${Math.round(b.health)} · EN ${Math.round(b.energy)} · MO ${Math.round(b.morale)}${warn}`;
+  }).join('<br>') + `<br><span style="color:#6b5636">Food: ${Math.round(S.food)} rations · Tide: ${tideWord()}</span>`;
+}
+function tideWord(){ return (S.tide>70?"HIGH ("+(S.tideRising?"rising":"falling")+")":S.tide<35?"LOW ("+(S.tideRising?"rising":"falling")+")":"MID ("+(S.tideRising?"rising":"falling")+")"); }
+
+function showStatus(){
+  setMsg(`<b>The Party</b>\n\n`+
+    S.brothers.map(b=>`${b.name}${b.down?' — DOWN':''}\n   Health ${Math.round(b.health)} / Energy ${Math.round(b.energy)} / Morale ${Math.round(b.morale)}`).join('\n\n')+
+    `\n\nFood: ${Math.round(S.food)} rations   Day ${S.day}   Tide: ${tideWord()}`);
+  clearButtons();
+  addButton("← Back", ()=>render());
+}
+
+/* -------- advancing the trail -------- */
+function tickTide(steps=1){
+  for(let i=0;i<steps;i++){
+    S.tide += (S.tideRising?1:-1)*rnd(9,14);
+    if(S.tide>=100){S.tide=100;S.tideRising=false;}
+    if(S.tide<=0){S.tide=0;S.tideRising=true;}
+  }
+}
+
+function advance(){
+  const seg = SEGMENTS[S.seg];
+  // River segment? must run the crossing mini-game before leaving it.
+  if(seg.river && S.distInSeg===0){
+    S.screen='MINIGAME'; render(); return;
+  }
+  // consume + fatigue for a leg of travel
+  const step = irnd(3,5);
+  S.distInSeg += step; S.day += (Math.random()<0.6?1:0);
+  const eaters = aliveBrothers().length;
+  S.food = Math.max(0, S.food - eaters*rnd(1.4,2.2));
+  tickTide(irnd(1,2));
+  aliveBrothers().forEach(b=>{
+    b.energy = clamp(b.energy - rnd(6,12));
+    if(S.food<=0){ b.health=clamp(b.health-rnd(6,11)); b.morale=clamp(b.morale-rnd(4,8)); }
+    else if(b.energy<25){ b.health=clamp(b.health-rnd(1,4)); }
+    if(b.morale<25) b.energy=clamp(b.energy-2);
+    if(b.health<=0){ b.health=0; b.down=true; }
+  });
+  // reached end of this segment?
+  if(S.distInSeg >= seg.dist){
+    S.seg++; S.distInSeg=0;
+    if(S.seg >= SEGMENTS.length-1){ S.screen='END'; return void render(); } // St. Martins
+    S.log = `You reach <b>${SEGMENTS[S.seg].name}</b>. ${SEGMENTS[S.seg].note}`;
+  } else {
+    S.log = `You push on through the backcountry. ${seg.name} stretches on.`;
+  }
+  if(checkAllDown()) return;
+  // random event?
+  if(Math.random()<0.62){ queueEvent(); }
+  else { S.screen='TRAIL'; render(); }
+}
+
+function checkAllDown(){
+  if(aliveBrothers().length===0){ S.screen='END'; render(); return true; }
+  return false;
+}
+
+/* ============================================================
+   RANDOM EVENTS
+   ============================================================ */
+function queueEvent(){ S.pending = pick(EVENTS)(); S.screen='EVENT'; render(); }
+
+function renderEvent(){
+  const e=S.pending;
+  drawScene(e.scene||'forest');
+  setMsg(`<b>${e.title}</b>\n\n${e.text}`);
+  setHint(partyLine());
+  e.options.forEach(o=> addButton(o.label, ()=>{
+    const res = o.do();
+    S.pending={result:res, title:e.title, scene:e.scene};
+    if(checkAllDown()) return;
+    showEventResult();
+  }, o.cls||""));
+}
+function showEventResult(){
+  const p=S.pending;
+  drawScene(p.scene||'forest');
+  setMsg(`<b>${p.title}</b>\n\n${p.result}`);
+  setHint(partyLine());
+  clearButtons();
+  addButton("Continue →", ()=>{ S.screen='TRAIL'; render(); }, "go");
+}
+
+// helpers that mutate party
+function damageRandom(min,max){ const b=pick(aliveBrothers()); if(!b)return null; b.health=clamp(b.health-rnd(min,max)); if(b.health<=0){b.health=0;b.down=true;} return b; }
+function healAll(min,max){ aliveBrothers().forEach(b=>b.health=clamp(b.health+rnd(min,max))); }
+function moraleAll(d){ aliveBrothers().forEach(b=>b.morale=clamp(b.morale+d)); }
+function energyAll(d){ aliveBrothers().forEach(b=>b.energy=clamp(b.energy+d)); }
+function loseFood(min,max){ const n=Math.round(rnd(min,max)); S.food=Math.max(0,S.food-n); return n; }
+function gainFood(min,max){ const n=Math.round(rnd(min,max)); S.food+=n; return n; }
+
+const EVENTS = [
+  // --- Black bear ---
+  ()=>({title:"Black Bear on the Trail", scene:'forest',
+    text:"A black bear rears up where the path bends through the spruce. It huffs and clacks its jaw. What do you do?",
+    options:[
+      {label:"Back away slowly", cls:"alt", do:()=>{
+        if(Math.random()<0.75){ moraleAll(-4); return "You give it room and speak low. The bear drops to all fours and ambles off. Hearts pounding, you carry on."; }
+        const b=damageRandom(14,26); return `The bear bluff-charges! ${b?b.name:"Someone"} stumbles back and takes a swipe — a nasty gash before it breaks off. (Animal attack!)`;
+      }},
+      {label:"Make yourselves big & shout", do:()=>{
+        if(Math.random()<0.6){ moraleAll(3); return "Three brothers roaring and waving trekking poles is a lot of bear. It thinks better of it and crashes off into the brush."; }
+        const n=loseFood(6,10); const b=damageRandom(8,18); return `The noise startles it the wrong way — it lunges through camp, scattering gear. You lose ${n} rations and ${b?b.name:"one of you"} is clawed. (Animal attack!)`;
+      }},
+      {label:"Run for it", cls:"", do:()=>{
+        const b=damageRandom(16,30); moraleAll(-8); return `Never run from a bear. It gives chase for thirty terrifying metres. ${b?b.name:"Someone"} takes a bad hit before it loses interest. (Animal attack!)`;
+      }},
+    ]}),
+  // --- Moose ---
+  ()=>({title:"A Bull Moose", scene:'fog',
+    text:"A bull moose stands square in the trail, water dripping from its muzzle. It is enormous, and it does not move.",
+    options:[
+      {label:"Wait it out", cls:"alt", do:()=>{ energyAll(-6); moraleAll(-2); return "You sit and wait. Twenty long minutes later it wanders off. You've lost time and daylight, but no blood spilled."; }},
+      {label:"Detour through the brush", do:()=>{ if(Math.random()<0.7){energyAll(-10);return "You bushwhack a wide loop around it. Exhausting, but safe.";} const b=damageRandom(6,14); return `The detour is steep and slick. ${b?b.name:"One brother"} slips on wet roots and twists an ankle.`; }},
+    ]}),
+  // --- Raccoon / food theft ---
+  ()=>({title:"Raided Cache", scene:'camp',
+    text:"You wake to shredded packaging. A raccoon — or a whole gang of them — got into the food bag overnight.",
+    options:[
+      {label:"Salvage what's left", do:()=>{ const n=loseFood(7,13); moraleAll(-5); return `You save what you can, but ${n} rations are gnawed to ruin. Lesson learned: hang the bag higher.`; }},
+      {label:"Track them down", cls:"alt", do:()=>{ if(Math.random()<0.4){const g=gainFood(3,6);return `You find the cache tucked under a log and recover ${g} rations. Small victory.`;} const n=loseFood(4,8); energyAll(-6);return `No luck — just scattered wrappers. You lose ${n} rations and an hour of daylight.`; }},
+    ]}),
+  // --- Lost food in a brook ---
+  ()=>({title:"Slip at the Ford", scene:'coast',
+    text:"Crossing a slick cobble brook, a pack strap snaps and a food sack tumbles into the current.",
+    options:[
+      {label:"Lunge for it", do:()=>{ if(Math.random()<0.55){moraleAll(4);return "You snag it dripping but intact. Nothing lost but your dry socks.";} const n=loseFood(6,11); const b=damageRandom(3,9); return `It's gone downstream — ${n} rations lost — and ${b?b.name:"you"} bangs a knee on the rocks lunging for it.`; }},
+      {label:"Let it go", cls:"alt", do:()=>{ const n=loseFood(5,9); return `Not worth drowning for. You watch ${n} rations bob away toward the bay.`; }},
+    ]}),
+  // --- Cold snap / exposure ---
+  ()=>({title:"Cold Fog off the Bay", scene:'fog',
+    text:"A wall of cold Fundy fog rolls in. Visibility drops to a few metres and everything turns clammy and grey.",
+    options:[
+      {label:"Push on carefully", do:()=>{ energyAll(-8); if(Math.random()<0.5){moraleAll(-4);return "You navigate by compass and the sound of surf. Slow, cold, nerve-wracking — but you make ground.";} const b=damageRandom(4,10); return `In the murk ${b?b.name:"someone"} misses a step on a clifftop root and takes a hard fall.`; }},
+      {label:"Hunker down till it lifts", cls:"alt", do:()=>{ S.food=Math.max(0,S.food-aliveBrothers().length*1.2); energyAll(8); moraleAll(-3); return "You brew tea and wait it out. The fog lifts by afternoon. You've burned rations and daylight, but rested legs."; }},
+    ]}),
+  // --- Positive: blueberries ---
+  ()=>({title:"Wild Blueberry Barrens", scene:'forest',
+    text:"The trail opens onto a sun-warmed barren thick with ripe wild blueberries.",
+    options:[
+      {label:"Feast and forage", cls:"go", do:()=>{ const g=gainFood(5,10); moraleAll(8); healAll(3,7); return `You gorge yourselves and fill a sack — ${g} rations' worth. Spirits soar.`; }},
+    ]}),
+  // --- Positive: good campsite ---
+  ()=>({title:"A Perfect Campsite", scene:'camp',
+    text:"You find a flat, sheltered bluff with a fire ring, fresh water, and a grandstand view of the tide going out.",
+    options:[
+      {label:"Rest well", cls:"go", do:()=>{ energyAll(16); moraleAll(10); healAll(4,8); return "A warm fire, dry socks, and the roar of the retreating tide. You sleep deep and wake strong."; }},
+    ]}),
+  // --- Positive: fellow hiker ---
+  ()=>({title:"A Fellow Hiker", scene:'coast',
+    text:"A solo through-hiker heading the other way stops to swap trail notes over a shared brew.",
+    options:[
+      {label:"Trade stories & snacks", cls:"go", do:()=>{ const g=gainFood(2,5); moraleAll(9); return `She warns you about the tide window at Little Salmon River and shares some jerky (+${g} rations). Morale lifts.`; }},
+    ]}),
+];
+
+/* ============================================================
+   CAMP (rest)
+   ============================================================ */
+function renderCamp(){
+  drawScene('camp');
+  setMsg(`<b>Camp</b>\n\nYou pitch the tents and get a fire going. Resting the night restores energy and morale but costs a day and rations.`);
+  setHint(partyLine());
+  addButton("😴 Rest the night", ()=>{
+    const eaters=aliveBrothers().length;
+    S.food=Math.max(0,S.food-eaters*rnd(2,3));
+    S.day++;
+    aliveBrothers().forEach(b=>{ b.energy=clamp(b.energy+rnd(22,34)); b.morale=clamp(b.morale+rnd(10,18));
+      if(S.food>0) b.health=clamp(b.health+rnd(4,9)); });
+    tickTide(irnd(2,4));
+    S.log = S.food<=0 ? "A cold, hungry night — rest, but empty bellies." : "A good night's rest. The brothers wake with fresh legs.";
+    S.screen='TRAIL'; render();
+  }, "go");
+  addButton("← Keep hiking instead", ()=>{ S.screen='TRAIL'; render(); });
+}
+
+/* ============================================================
+   MINI-GAME: TIDAL RIVER CROSSING
+   ============================================================
+   Cross the river before the incoming tide floods the channel.
+   A "surge bar" sweeps back and forth; the player taps SPACE / clicks
+   to send the next brother dashing when the marker is in the safe
+   (low-water) zone. Mistiming = swept downstream (damage / lost food).
+============================================================ */
+let mg=null;
+function startCrossing(){
+  const seg=SEGMENTS[S.seg];
+  mg={
+    t:0, marker:0, dir:1, speed:1.6,
+    safeStart:0.40, safeW:0.20,   // moving safe window recomputed each frame
+    crossed:0, need:aliveBrothers().length,
+    tide:20, tideRate:0.10,        // local tide fills to 100 = flooded
+    dashing:null, dashProg:0, dashFrom:0,
+    results:[], over:false, outcome:null,
+    idxOrder:aliveBrothers(),
+    raf:null,
+  };
+  setMsg(`<b>Tidal Crossing — ${seg.name}</b>\n\nThe channel is fordable only at low water, and the Fundy tide is coming in fast. `+
+    `Send each brother across when the marker is in the GREEN low-water window. Miss it and the current takes them.`);
+  setHint(`Tap <b>SPACE</b> or press <b>Send Brother</b> when the marker is in the green zone. Get all ${mg.need} across before the tide floods the channel.`);
+  clearButtons();
+  addButton("➤ Send Brother", tryDash, "go");
+  addButton("Skip (wade & pray)", skipCrossing, "");
+  window.addEventListener('keydown', mgKey);
+  cv.addEventListener('click', tryDash);
+  mgLoop();
+}
+function mgKey(e){ if(e.code==='Space'){ e.preventDefault(); tryDash(); } }
+
+function endCrossingListeners(){
+  window.removeEventListener('keydown', mgKey);
+  cv.removeEventListener('click', tryDash);
+  if(mg&&mg.raf) cancelAnimationFrame(mg.raf);
+}
+
+function tryDash(){
+  if(!mg||mg.over||mg.dashing) return;
+  const inSafe = mg.marker>=mg.safeStart && mg.marker<=mg.safeStart+mg.safeW;
+  const bro = mg.idxOrder[mg.crossed];
+  if(!bro) return;
+  if(inSafe){
+    mg.dashing=bro; mg.dashProg=0; mg.dashSafe=true;
+  } else {
+    // mistimed — swept
+    mg.dashing=bro; mg.dashProg=0; mg.dashSafe=false;
+  }
+}
+function skipCrossing(){
+  // wade the whole party at once — risky
+  endCrossingListeners();
+  let hurt=0, foodLost=0;
+  aliveBrothers().forEach(b=>{
+    if(Math.random()<0.5){ b.health=clamp(b.health-rnd(10,22)); if(b.health<=0){b.health=0;b.down=true;} hurt++; }
+  });
+  if(Math.random()<0.6) foodLost=loseFood(5,12);
+  moraleAll(-6);
+  S.log = `You wade in together and fight the current. `+
+    (hurt?`${hurt} brother(s) get knocked down and bruised. `:`Somehow everyone keeps their feet. `)+
+    (foodLost?`${foodLost} rations wash away. `:``)+
+    `You scramble up the far bank, soaked.`;
+  finishCrossing();
+}
+
+function mgLoop(){
+  if(!mg) return;
+  mg.t+=1;
+  // marker sweep
+  if(!mg.dashing){
+    mg.marker += mg.dir*mg.speed*0.01;
+    if(mg.marker>1){mg.marker=1;mg.dir=-1;} if(mg.marker<0){mg.marker=0;mg.dir=1;}
+  }
+  // tide creeps up, shrinking the safe window and speeding the marker
+  mg.tide += mg.tideRate;
+  mg.safeW = Math.max(0.07, 0.22 - mg.tide*0.0011);
+  mg.safeStart = 0.5 - mg.safeW/2 + Math.sin(mg.t*0.01)*0.18;
+  mg.speed = 1.5 + mg.tide*0.012;
+  // handle a dash in progress
+  if(mg.dashing){
+    mg.dashProg += 0.03;
+    if(mg.dashProg>=1){
+      if(mg.dashSafe){ mg.crossed++; mg.results.push({b:mg.dashing,ok:true}); }
+      else {
+        const b=mg.dashing; b.health=clamp(b.health-rnd(12,24)); if(b.health<=0){b.health=0;b.down=true;}
+        if(Math.random()<0.5) loseFood(3,7);
+        mg.crossed++; mg.results.push({b,ok:false});
+      }
+      mg.dashing=null;
+      if(mg.crossed>=mg.need){ mgWin(); return; }
+    }
+  }
+  // tide flooded before everyone crossed?
+  if(mg.tide>=100 && !mg.over){ mgFlood(); return; }
+  drawCrossing();
+  mg.raf=requestAnimationFrame(mgLoop);
+}
+
+function mgWin(){
+  mg.over=true; endCrossingListeners();
+  const fails=mg.results.filter(r=>!r.ok).length;
+  moraleAll(fails?-3:5);
+  S.log = fails
+    ? `You get everyone across, but ${fails} mistimed the surge and were briefly swept — battered but alive on the far bank.`
+    : `Textbook. Each brother waited for the low-water window and crossed clean. You beat the Fundy tide.`;
+  drawCrossing(); setTimeout(finishCrossing, 500);
+}
+function mgFlood(){
+  mg.over=true; endCrossingListeners();
+  const stranded=mg.need-mg.crossed;
+  for(let i=0;i<stranded;i++){ const b=mg.idxOrder[mg.crossed+i]; if(b){ b.health=clamp(b.health-rnd(18,30)); b.morale=clamp(b.morale-12); if(b.health<=0){b.health=0;b.down=true;} } }
+  loseFood(4,9);
+  S.log = `The channel floods before you're all across! ${stranded} brother(s) are caught by the incoming tide and hauled out half-drowned. A hard, cold lesson in Fundy timing.`;
+  drawCrossing(); setTimeout(finishCrossing, 500);
+}
+function finishCrossing(){
+  if(checkAllDown()) return;
+  // leaving the river segment: advance past it
+  const seg=SEGMENTS[S.seg];
+  S.distInSeg = seg.dist;             // treat river as traversed
+  S.food=Math.max(0, S.food - aliveBrothers().length*rnd(1,1.8));
+  S.day += 1;
+  S.seg++; S.distInSeg=0;
+  tickTide(2);
+  if(S.seg>=SEGMENTS.length-1){ S.screen='END'; return void render(); }
+  S.pending=null; mg=null;
+  S.screen='TRAIL'; render();
+}
+
+function drawCrossing(){
+  cx.clearRect(0,0,W,H);
+  // sky + far bank
+  bg("#9ec0cf","#c7d3bd");
+  cx.fillStyle="#6b8f79"; cx.fillRect(0,60,W,50);
+  // water (rises with tide)
+  const waterTop = 300 - mg.tide*1.6;
+  const wg=cx.createLinearGradient(0,waterTop,0,H); wg.addColorStop(0,"#3a86a0"); wg.addColorStop(1,"#1c5468");
+  cx.fillStyle=wg; cx.fillRect(0,waterTop,W,H-waterTop);
+  // moving water lines
+  cx.strokeStyle="rgba(255,255,255,.25)"; cx.lineWidth=2;
+  for(let y=waterTop+14;y<H;y+=20){ cx.beginPath(); for(let x=0;x<=W;x+=16){cx.lineTo(x,y+Math.sin((x*0.05)+(mg.t*0.08))*4);} cx.stroke(); }
+  // near + far banks (red Fundy mud)
+  cx.fillStyle="#7a4433"; cx.fillRect(0,H-40,W,40); cx.fillStyle="#8a5140"; cx.fillRect(0,waterTop-16,W,16);
+  // crossed brothers on far bank
+  for(let i=0;i<mg.crossed;i++){ drawMiniHiker(60+i*34, 92, mg.results[i]&&!mg.results[i].ok); }
+  // waiting brothers on near bank
+  for(let i=mg.crossed;i<mg.need;i++){ if(mg.dashing&&i===mg.crossed) continue; drawMiniHiker(660+ (i-mg.crossed)*34, H-46, false); }
+  // dashing brother travels across
+  if(mg.dashing){
+    const x = 680 - mg.dashProg*600;
+    const y = (H-46) - mg.dashProg*(H-46-92) + (mg.dashSafe?0:Math.sin(mg.dashProg*10)*10);
+    drawMiniHiker(x,y, !mg.dashSafe);
+    if(!mg.dashSafe){ cx.fillStyle="rgba(255,255,255,.5)"; for(let k=0;k<6;k++){cx.fillRect(x-14+irnd(0,28), y-6+irnd(0,20),3,3);} }
+  }
+
+  // ---- surge timing bar ----
+  const bx=120,bw=560,by=326,bh=20;
+  cx.fillStyle="rgba(20,12,6,.8)"; cx.fillRect(bx-8,by-8,bw+16,bh+16);
+  cx.fillStyle="#2c4650"; cx.fillRect(bx,by,bw,bh);
+  // safe zone (green low-water window)
+  cx.fillStyle="#3f9d4a"; cx.fillRect(bx+mg.safeStart*bw, by, mg.safeW*bw, bh);
+  cx.strokeStyle="#eaddc0"; cx.lineWidth=2; cx.strokeRect(bx,by,bw,bh);
+  // marker
+  const mxp=bx+mg.marker*bw;
+  cx.fillStyle="#f4d03f"; cx.fillRect(mxp-3,by-6,6,bh+12);
+  cx.fillStyle="#eaddc0"; cx.font="11px Courier New"; cx.textAlign="center";
+  cx.fillText("LOW WATER — cross here", bx+ (mg.safeStart+mg.safeW/2)*bw, by-12);
+  cx.textAlign="left";
+
+  // HUD
+  cx.fillStyle="rgba(20,12,6,.72)"; cx.fillRect(0,0,W,26);
+  cx.fillStyle="#eaddc0"; cx.font="13px Courier New";
+  cx.fillText(`Across: ${mg.crossed}/${mg.need}`, 12, 18);
+  cx.fillText(`Tide flooding: ${Math.round(mg.tide)}%`, 150, 18);
+  // tide danger bar
+  cx.strokeStyle="#eaddc0"; cx.strokeRect(340,7,120,12);
+  cx.fillStyle=mg.tide>70?"#c0392b":mg.tide>45?"#d1a12f":"#3f9d4a"; cx.fillRect(341,8,mg.tide*1.18,10);
+  cx.fillStyle="#eaddc0"; cx.fillText("← beat the tide", 480,18);
+}
+function drawMiniHiker(x,y,wet){
+  cx.save(); if(wet)cx.globalAlpha=0.85;
+  cx.fillStyle="#3a2a1e"; cx.fillRect(x-6,y-22,12,20);
+  cx.fillStyle="#6d4a2c"; cx.fillRect(x-8,y-20,7,12);       // pack
+  cx.fillStyle="#c9a27a"; cx.beginPath(); cx.arc(x,y-26,5,0,7); cx.fill();
+  cx.fillStyle="#2e2016"; cx.fillRect(x-5,y-2,4,10); cx.fillRect(x+1,y-2,4,10);
+  cx.restore();
+}
+
+/* ============================================================
+   END SCREEN
+   ============================================================ */
+function renderEnd(){
+  const alive=aliveBrothers();
+  const won = S.seg>=SEGMENTS.length-1 && alive.length>0;
+  drawScene(won?'end':'fog');
+  if(won){
+    setMsg(`<b>🏁 St. Martins!</b>\n\nThe forest breaks open and there it is — the harbour, the sea caves, the covered bridges, and the promise of a hot lobster roll. `+
+      `${alive.length===3?"All three brothers":alive.map(b=>b.name).join(" and ")+ (alive.length===1?" alone":"")} walk out of the wilderness on Day ${S.day}, salt-stained and grinning.\n\n`+
+      `You read the tides, out-stubborned the bears, and finished the Fundy Footpath. Legends of the family from here on.`);
+  } else {
+    setMsg(`<b>The Trail Wins This Time</b>\n\nThe backcountry is unforgiving, and the Bay of Fundy more so. `+
+      `The brothers couldn't go on — beaten by ${S.food<=0?'hunger':'injury and cold'} somewhere along the Footpath on Day ${S.day}.\n\n`+
+      `The Fundy Footpath will still be here. Rest up, pack smarter, and time that tide. Try again.`);
+  }
+  setHint(`Final party:<br>`+S.brothers.map(b=>`${b.name}: ${b.down?'<span style="color:#9e3b2f">did not finish</span>':'HP '+Math.round(b.health)}`).join('<br>')+`<br>Reached: ${SEGMENTS[Math.min(S.seg,SEGMENTS.length-1)].name} · Day ${S.day}`);
+  clearButtons();
+  addButton("↺ Hike It Again", ()=>{ S=newState(); render(); }, "go");
+}
+
+/* ============================================================
+   BOOT
+   ============================================================ */
+S = newState();
+render();
+</script>
+</body>
+</html>
